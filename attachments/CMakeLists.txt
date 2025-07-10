@@ -94,7 +94,7 @@ function (add_slang_shader_target TARGET)
   )
   add_custom_command (
           OUTPUT  ${SHADERS_DIR}/slang.spv
-          COMMAND ${SLANGC_EXECUTABLE} ${SHADER_SOURCES} -target spirv -profile spirv_1_4 -emit-spirv-directly -fvk-use-entrypoint-name ${ENTRY_POINTS} -o slang.spv
+          COMMAND ${SLANGC_EXECUTABLE} ${SHADER_SOURCES} -target spirv -profile spirv_1_4+spvRayQueryKHR -emit-spirv-directly -fvk-use-entrypoint-name ${ENTRY_POINTS} -o slang.spv
           WORKING_DIRECTORY ${SHADERS_DIR}
           DEPENDS ${SHADERS_DIR} ${SHADER_SOURCES}
           COMMENT "Compiling Slang Shaders"
@@ -227,8 +227,12 @@ add_chapter (27_depth_buffering
 
 add_chapter (28_model_loading
   SHADER 27_shader_depth
-  MODELS viking_room.obj
-  TEXTURES viking_room.png
+  MODELS plant_on_table.obj
+  MODELS plant_on_table.mtl
+  TEXTURES plant_on_table_textures/nettle_plant_diff_4k.png
+  TEXTURES plant_on_table_textures/potted_plant_02_pot_diff_1k.png
+  TEXTURES plant_on_table_textures/wooden_picnic_table_bottom_diff_1k.png
+  TEXTURES plant_on_table_textures/wooden_picnic_table_top_diff_1k.png
   LIBS glm::glm tinyobjloader::tinyobjloader)
 
 add_chapter (29_mipmapping

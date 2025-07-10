@@ -32,7 +32,7 @@ import vulkan_hpp;
 constexpr uint32_t WIDTH = 800;
 constexpr uint32_t HEIGHT = 600;
 constexpr uint64_t FenceTimeout = 100000000;
-const std::string MODEL_PATH = "models/viking_room.obj";
+const std::string MODEL_PATH = "models/plant_on_table.obj";
 const std::string TEXTURE_PATH = "textures/viking_room.png";
 constexpr int MAX_FRAMES_IN_FLIGHT = 2;
 
@@ -50,27 +50,32 @@ struct Vertex {
     glm::vec3 pos;
     glm::vec3 color;
     glm::vec2 texCoord;
+    glm::vec3 normal;
 
     static vk::VertexInputBindingDescription getBindingDescription() {
         return { 0, sizeof(Vertex), vk::VertexInputRate::eVertex };
     }
 
-    static std::array<vk::VertexInputAttributeDescription, 3> getAttributeDescriptions() {
+    static std::array<vk::VertexInputAttributeDescription, 4> getAttributeDescriptions() {
         return {
             vk::VertexInputAttributeDescription( 0, 0, vk::Format::eR32G32B32Sfloat, offsetof(Vertex, pos) ),
             vk::VertexInputAttributeDescription( 1, 0, vk::Format::eR32G32B32Sfloat, offsetof(Vertex, color) ),
-            vk::VertexInputAttributeDescription( 2, 0, vk::Format::eR32G32Sfloat, offsetof(Vertex, texCoord) )
+            vk::VertexInputAttributeDescription( 2, 0, vk::Format::eR32G32Sfloat, offsetof(Vertex, texCoord) ),
+            vk::VertexInputAttributeDescription( 3, 0, vk::Format::eR32G32B32Sfloat, offsetof(Vertex, normal) )
         };
     }
 
     bool operator==(const Vertex& other) const {
-        return pos == other.pos && color == other.color && texCoord == other.texCoord;
+        return pos == other.pos && color == other.color && texCoord == other.texCoord && normal == other.normal;
     }
 };
 
 template<> struct std::hash<Vertex> {
     size_t operator()(Vertex const& vertex) const noexcept {
-        return ((hash<glm::vec3>()(vertex.pos) ^ (hash<glm::vec3>()(vertex.color) << 1)) >> 1) ^ (hash<glm::vec2>()(vertex.texCoord) << 1);
+        auto h = std::hash<glm::vec3>()(vertex.pos) ^ (std::hash<glm::vec3>()(vertex.color) << 1);
+        h = (h >> 1) ^ (std::hash<glm::vec2>()(vertex.texCoord) << 1);
+        h = (h >> 1) ^ (std::hash<glm::vec3>()(vertex.normal) << 1);
+        return h;
     }
 };
 
@@ -78,6 +83,11 @@ struct UniformBufferObject {
     alignas(16) glm::mat4 model;
     alignas(16) glm::mat4 view;
     alignas(16) glm::mat4 proj;
+    alignas(16) glm::vec3 cameraPos;
+};
+
+struct PushConstant {
+    uint32_t materialIndex;
 };
 
 class HelloTriangleApplication {
@@ -109,7 +119,8 @@ private:
     vk::Extent2D swapChainExtent;
     std::vector<vk::raii::ImageView> swapChainImageViews;
 
-    vk::raii::DescriptorSetLayout descriptorSetLayout = nullptr;
+    vk::raii::DescriptorSetLayout descriptorSetLayoutGlobal = nullptr;
+    vk::raii::DescriptorSetLayout descriptorSetLayoutMaterial = nullptr;
     vk::raii::PipelineLayout pipelineLayout = nullptr;
     vk::raii::Pipeline graphicsPipeline = nullptr;
 
@@ -117,9 +128,9 @@ private:
     vk::raii::DeviceMemory depthImageMemory = nullptr;
     vk::raii::ImageView depthImageView = nullptr;
 
-    vk::raii::Image textureImage = nullptr;
-    vk::raii::DeviceMemory textureImageMemory = nullptr;
-    vk::raii::ImageView textureImageView = nullptr;
+    std::vector<vk::raii::Image> textureImages;
+    std::vector<vk::raii::DeviceMemory> textureImageMemories;
+    std::vector<vk::raii::ImageView> textureImageViews;
     vk::raii::Sampler textureSampler = nullptr;
 
     std::vector<Vertex> vertices;
@@ -128,13 +139,52 @@ private:
     vk::raii::DeviceMemory vertexBufferMemory = nullptr;
     vk::raii::Buffer indexBuffer = nullptr;
     vk::raii::DeviceMemory indexBufferMemory = nullptr;
+    vk::raii::Buffer uvBuffer = nullptr;
+    vk::raii::DeviceMemory uvBufferMemory = nullptr;
+
+    UniformBufferObject ubo{};
+
+    std::vector<vk::raii::Buffer> blasBuffers;
+    std::vector<vk::raii::DeviceMemory> blasMemories;
+    std::vector<vk::raii::AccelerationStructureKHR> blasHandles;
+
+    std::vector<vk::AccelerationStructureInstanceKHR> instances;
+    vk::raii::Buffer instanceBuffer = nullptr;
+    vk::raii::DeviceMemory instanceMemory = nullptr;
+
+    struct InstanceLUT {
+        uint32_t materialID;
+        uint32_t indexBufferOffset;
+    };
+    std::vector<InstanceLUT> instanceLUTs;
+    vk::raii::Buffer instanceLUTBuffer = nullptr;
+    vk::raii::DeviceMemory instanceLUTBufferMemory = nullptr;
+
+    vk::raii::Buffer tlasBuffer = nullptr;
+    vk::raii::DeviceMemory tlasMemory = nullptr;
+    vk::raii::AccelerationStructureKHR tlas = nullptr;
+
+    vk::raii::Buffer tlasScratchBuffer = nullptr;
+    vk::raii::DeviceMemory tlasScratchMemory = nullptr;
 
     std::vector<vk::raii::Buffer> uniformBuffers;
     std::vector<vk::raii::DeviceMemory> uniformBuffersMemory;
     std::vector<void*> uniformBuffersMapped;
 
+    struct SubMesh {
+        uint32_t indexOffset;
+        uint32_t indexCount;
+        int matID;
+        uint32_t firstVertex;
+        uint32_t maxVertex;
+        bool alphaCut;
+    };
+    std::vector<SubMesh> submeshes;
+    std::vector<tinyobj::material_t> materials;
+
     vk::raii::DescriptorPool descriptorPool = nullptr;
-    std::vector<vk::raii::DescriptorSet> descriptorSets;
+    std::vector<vk::raii::DescriptorSet> globalDescriptorSets;
+    std::vector<vk::raii::DescriptorSet> materialDescriptorSets;
 
     vk::raii::CommandPool commandPool = nullptr;
     std::vector<vk::raii::CommandBuffer> commandBuffers;
@@ -152,7 +202,11 @@ private:
         vk::KHRSwapchainExtensionName,
         vk::KHRSpirv14ExtensionName,
         vk::KHRSynchronization2ExtensionName,
-        vk::KHRCreateRenderpass2ExtensionName
+        vk::KHRCreateRenderpass2ExtensionName,
+        vk::KHRBufferDeviceAddressExtensionName,
+        vk::KHRAccelerationStructureExtensionName,
+        vk::KHRDeferredHostOperationsExtensionName,
+        vk::KHRRayQueryExtensionName,
     };
 
     void initWindow() {
@@ -178,16 +232,17 @@ private:
         createLogicalDevice();
         createSwapChain();
         createImageViews();
+        createCommandPool();
+        loadModel(MODEL_PATH);
         createDescriptorSetLayout();
         createGraphicsPipeline();
-        createCommandPool();
         createDepthResources();
-        createTextureImage();
-        createTextureImageView();
         createTextureSampler();
-        loadModel();
         createVertexBuffer();
         createIndexBuffer();
+        createUVBuffer();
+        createInstanceLUTBuffer();
+        createAccelerationStructures();
         createUniformBuffers();
         createDescriptorPool();
         createDescriptorSets();
@@ -325,9 +380,21 @@ private:
                                                                  { return strcmp( availableDeviceExtension.extensionName, requiredDeviceExtension ) == 0; } );
                                    } );
 
-            auto features = device.template getFeatures2<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan13Features, vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>();
+            auto features = device.template getFeatures2<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan13Features,
+                vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT,
+                vk::PhysicalDeviceVulkan12Features,
+                vk::PhysicalDeviceAccelerationStructureFeaturesKHR,
+                vk::PhysicalDeviceRayQueryFeaturesKHR>();
             bool supportsRequiredFeatures = features.template get<vk::PhysicalDeviceVulkan13Features>().dynamicRendering &&
-                                features.template get<vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>().extendedDynamicState;
+                                features.template get<vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>().extendedDynamicState &&
+                                features.template get<vk::PhysicalDeviceVulkan12Features>().bufferDeviceAddress &&
+                                features.template get<vk::PhysicalDeviceVulkan12Features>().descriptorBindingSampledImageUpdateAfterBind &&
+                                features.template get<vk::PhysicalDeviceVulkan12Features>().descriptorBindingPartiallyBound &&
+                                features.template get<vk::PhysicalDeviceVulkan12Features>().descriptorBindingVariableDescriptorCount &&
+                                features.template get<vk::PhysicalDeviceVulkan12Features>().runtimeDescriptorArray &&
+                                features.template get<vk::PhysicalDeviceVulkan12Features>().shaderSampledImageArrayNonUniformIndexing &&
+                                features.template get<vk::PhysicalDeviceAccelerationStructureFeaturesKHR>().accelerationStructure &&
+                                features.template get<vk::PhysicalDeviceRayQueryFeaturesKHR>().rayQuery;
 
             return supportsVulkan1_3 && supportsGraphics && supportsAllRequiredExtensions && supportsRequiredFeatures;
           } );
@@ -392,11 +459,25 @@ private:
         // query for Vulkan 1.3 features
         auto features = physicalDevice.getFeatures2();
         vk::PhysicalDeviceVulkan13Features vulkan13Features;
+        vk::PhysicalDeviceVulkan12Features vulkan12Features;
         vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT extendedDynamicStateFeatures;
+        vk::PhysicalDeviceAccelerationStructureFeaturesKHR accelerationStructureFeatures;
+        vk::PhysicalDeviceRayQueryFeaturesKHR rayQueryFeatures;
         vulkan13Features.dynamicRendering = vk::True;
         vulkan13Features.synchronization2 = vk::True;
         extendedDynamicStateFeatures.extendedDynamicState = vk::True;
+        vulkan12Features.bufferDeviceAddress = vk::True;
+        vulkan12Features.descriptorBindingSampledImageUpdateAfterBind = vk::True;
+        vulkan12Features.descriptorBindingPartiallyBound = vk::True;
+        vulkan12Features.descriptorBindingVariableDescriptorCount = vk::True;
+        vulkan12Features.runtimeDescriptorArray = vk::True;
+        vulkan12Features.shaderSampledImageArrayNonUniformIndexing = vk::True;
+        accelerationStructureFeatures.accelerationStructure = vk::True;
+        rayQueryFeatures.rayQuery = vk::True;
         vulkan13Features.pNext = &extendedDynamicStateFeatures;
+        extendedDynamicStateFeatures.pNext = &accelerationStructureFeatures;
+        accelerationStructureFeatures.pNext = &vulkan12Features;
+        vulkan12Features.pNext = &rayQueryFeatures;
         features.pNext = &vulkan13Features;
         // create a Device
         float                     queuePriority = 0.0f;
@@ -447,13 +528,44 @@ private:
     }
 
     void createDescriptorSetLayout() {
-        std::array bindings = {
-            vk::DescriptorSetLayoutBinding( 0, vk::DescriptorType::eUniformBuffer, 1, vk::ShaderStageFlagBits::eVertex, nullptr),
-            vk::DescriptorSetLayoutBinding( 1, vk::DescriptorType::eCombinedImageSampler, 1, vk::ShaderStageFlagBits::eFragment, nullptr)
+        // Use descriptor set 0 for global data
+        std::array global_bindings = {
+            vk::DescriptorSetLayoutBinding( 0, vk::DescriptorType::eUniformBuffer, 1, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, nullptr),
+			vk::DescriptorSetLayoutBinding( 1, vk::DescriptorType::eAccelerationStructureKHR, 1, vk::ShaderStageFlagBits::eFragment, nullptr),
+			vk::DescriptorSetLayoutBinding( 2, vk::DescriptorType::eStorageBuffer, 1, vk::ShaderStageFlagBits::eFragment, nullptr),
+			vk::DescriptorSetLayoutBinding( 3, vk::DescriptorType::eStorageBuffer, 1, vk::ShaderStageFlagBits::eFragment, nullptr),
+			vk::DescriptorSetLayoutBinding( 4, vk::DescriptorType::eStorageBuffer, 1, vk::ShaderStageFlagBits::eFragment, nullptr)
         };
 
-        vk::DescriptorSetLayoutCreateInfo layoutInfo{ .bindingCount = static_cast<uint32_t>(bindings.size()), .pBindings = bindings.data() };
-        descriptorSetLayout = vk::raii::DescriptorSetLayout(device, layoutInfo);
+        vk::DescriptorSetLayoutCreateInfo globalLayoutInfo{ .bindingCount = static_cast<uint32_t>(global_bindings.size()), .pBindings = global_bindings.data() };
+        descriptorSetLayoutGlobal = vk::raii::DescriptorSetLayout(device, globalLayoutInfo);
+
+        // Use descriptor set 1 for bindless material data
+        uint32_t textureCount = static_cast<uint32_t>(textureImageViews.size());
+
+        std::array material_bindings = {
+            vk::DescriptorSetLayoutBinding( 0, vk::DescriptorType::eSampler, 1, vk::ShaderStageFlagBits::eFragment, nullptr),
+			vk::DescriptorSetLayoutBinding( 1, vk::DescriptorType::eSampledImage, static_cast<uint32_t>(textureCount), vk::ShaderStageFlagBits::eFragment, nullptr)
+        };
+
+        std::vector<vk::DescriptorBindingFlags> bindingFlags = {
+            vk::DescriptorBindingFlagBits::eUpdateAfterBind,
+            vk::DescriptorBindingFlagBits::ePartiallyBound | vk::DescriptorBindingFlagBits::eVariableDescriptorCount | vk::DescriptorBindingFlagBits::eUpdateAfterBind
+        };
+
+        vk::DescriptorSetLayoutBindingFlagsCreateInfo flagsCreateInfo{
+            .bindingCount = static_cast<uint32_t>(bindingFlags.size()),
+            .pBindingFlags = bindingFlags.data()
+        };
+
+        vk::DescriptorSetLayoutCreateInfo materialLayoutInfo{
+            .pNext = &flagsCreateInfo,
+            .flags = vk::DescriptorSetLayoutCreateFlagBits::eUpdateAfterBindPool,
+            .bindingCount = static_cast<uint32_t>(material_bindings.size()),
+            .pBindings = material_bindings.data(),
+        };
+
+        descriptorSetLayoutMaterial = vk::raii::DescriptorSetLayout(device, materialLayoutInfo);
     }
 
     void createGraphicsPipeline() {
@@ -516,7 +628,15 @@ private:
         };
         vk::PipelineDynamicStateCreateInfo dynamicState{ .dynamicStateCount = static_cast<uint32_t>(dynamicStates.size()), .pDynamicStates = dynamicStates.data() };
 
-        vk::PipelineLayoutCreateInfo pipelineLayoutInfo{  .setLayoutCount = 1, .pSetLayouts = &*descriptorSetLayout, .pushConstantRangeCount = 0 };
+        vk::DescriptorSetLayout setLayouts[] = {*descriptorSetLayoutGlobal, *descriptorSetLayoutMaterial};
+
+        vk::PushConstantRange pushConstantRange {
+            .stageFlags = vk::ShaderStageFlagBits::eFragment,
+            .offset = 0,
+            .size = sizeof(PushConstant)
+        };
+
+        vk::PipelineLayoutCreateInfo pipelineLayoutInfo{  .setLayoutCount = 2, .pSetLayouts = setLayouts, .pushConstantRangeCount = 1, .pPushConstantRanges = &pushConstantRange };
 
         pipelineLayout = vk::raii::PipelineLayout(device, pipelineLayoutInfo);
 
@@ -586,9 +706,9 @@ private:
         return format == vk::Format::eD32SfloatS8Uint || format == vk::Format::eD24UnormS8Uint;
     }
 
-    void createTextureImage() {
+    std::pair<vk::raii::Image, vk::raii::DeviceMemory> createTextureImage(const std::string& path) {
         int texWidth, texHeight, texChannels;
-        stbi_uc* pixels = stbi_load(TEXTURE_PATH.c_str(), &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
+        stbi_uc* pixels = stbi_load(path.c_str(), &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
         vk::DeviceSize imageSize = texWidth * texHeight * 4;
 
         if (!pixels) {
@@ -605,15 +725,19 @@ private:
 
         stbi_image_free(pixels);
 
+        vk::raii::Image textureImage = nullptr;
+        vk::raii::DeviceMemory textureImageMemory = nullptr;
         createImage(texWidth, texHeight, vk::Format::eR8G8B8A8Srgb, vk::ImageTiling::eOptimal, vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled, vk::MemoryPropertyFlagBits::eDeviceLocal, textureImage, textureImageMemory);
 
         transitionImageLayout(textureImage, vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal);
         copyBufferToImage(stagingBuffer, textureImage, static_cast<uint32_t>(texWidth), static_cast<uint32_t>(texHeight));
         transitionImageLayout(textureImage, vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal);
+
+        return std::make_pair(std::move(textureImage), std::move(textureImageMemory));
     }
 
-    void createTextureImageView() {
-        textureImageView = createImageView(textureImage, vk::Format::eR8G8B8A8Srgb, vk::ImageAspectFlagBits::eColor);
+    vk::raii::ImageView createTextureImageView(vk::raii::Image& textureImage) {
+        return createImageView(textureImage, vk::Format::eR8G8B8A8Srgb, vk::ImageAspectFlagBits::eColor);
     }
 
     void createTextureSampler() {
@@ -714,19 +838,31 @@ private:
         endSingleTimeCommands(*commandBuffer);
     }
 
-    void loadModel() {
+    void loadModel(const std::string& modelPath) {
         tinyobj::attrib_t attrib;
         std::vector<tinyobj::shape_t> shapes;
-        std::vector<tinyobj::material_t> materials;
+        std::vector<tinyobj::material_t> localMaterials;
         std::string warn, err;
 
-        if (!LoadObj(&attrib, &shapes, &materials, &warn, &err, MODEL_PATH.c_str())) {
+        if (!LoadObj(&attrib, &shapes, &localMaterials, &warn, &err, modelPath.c_str(), modelPath.substr(0, modelPath.find_last_of("/\\")).c_str())) {
             throw std::runtime_error(warn + err);
         }
 
+        size_t materialOffset = materials.size();
+        size_t oldTextureCount = textureImageViews.size();
+
+        materials.insert(materials.end(), localMaterials.begin(), localMaterials.end());
+
         std::unordered_map<Vertex, uint32_t> uniqueVertices{};
 
+        uint32_t indexOffset = 0;
+
         for (const auto& shape : shapes) {
+            std::cout << "Loading mesh: " << shape.name << ": " << shape.mesh.indices.size()/3 << " triangles\n";
+
+            uint32_t startOffset = indexOffset;
+            uint32_t localMaxV = 0;
+
             for (const auto& index : shape.mesh.indices) {
                 Vertex vertex{};
 
@@ -743,14 +879,267 @@ private:
 
                 vertex.color = {1.0f, 1.0f, 1.0f};
 
+                if (index.normal_index >= 0) {
+                    vertex.normal = {
+                        attrib.normals[3 * index.normal_index + 0],
+                        attrib.normals[3 * index.normal_index + 1],
+                        attrib.normals[3 * index.normal_index + 2]
+                    };
+                } else {
+                    vertex.normal = {0.0f, 0.0f, 0.0f};
+                }
+
                 if (!uniqueVertices.contains(vertex)) {
                     uniqueVertices[vertex] = static_cast<uint32_t>(vertices.size());
                     vertices.push_back(vertex);
                 }
 
                 indices.push_back(uniqueVertices[vertex]);
+                indexOffset++;
+
+                uint32_t vi;
+                auto it = uniqueVertices.find(vertex);
+                if (it != uniqueVertices.end()) {
+                    vi = it->second;
+                } else {
+                    vi = static_cast<uint32_t>(vertices.size());
+                    uniqueVertices[vertex] = vi;
+                    vertices.push_back(vertex);
+                }
+
+                localMaxV = std::max(localMaxV, vi);
+            }
+
+            int localMaterialID = shape.mesh.material_ids.empty() ? -1 : shape.mesh.material_ids[0];
+            int globalMaterialID = (localMaterialID < 0) ? -1 : static_cast<int>(materialOffset + localMaterialID);
+
+            uint32_t indexCount = indexOffset - startOffset;
+
+            // Note that this is only valid for this particular MODEL_PATH
+            bool alphaCut = (shape.name.find("nettle_plant") != std::string::npos);
+
+            submeshes.push_back({ startOffset, indexCount, globalMaterialID, 0u, localMaxV + 1, alphaCut });
+            instanceLUTs.push_back({ static_cast<uint32_t>(globalMaterialID), startOffset });
+        }
+
+        for (size_t i = 0; i < localMaterials.size(); ++i) {
+            const auto& material = localMaterials[i];
+
+            if (!material.diffuse_texname.empty()) {
+                std::string texturePath = modelPath.substr(0, modelPath.find_last_of("/\\")) + "/" + material.diffuse_texname;
+                auto [img, mem] = createTextureImage(texturePath);
+                textureImages.push_back(std::move(img));
+                textureImageMemories.push_back(std::move(mem));
+                textureImageViews.emplace_back(createTextureImageView(textureImages.back()));
+            } else {
+                std::cout << "No texture for material: " << material.name << std::endl;
             }
         }
+    }
+
+    void createAccelerationStructures() {
+        vk::BufferDeviceAddressInfo vai{ .buffer = *vertexBuffer };
+        vk::DeviceAddress vertexAddr = device.getBufferAddressKHR(vai);
+        vk::BufferDeviceAddressInfo iai{ .buffer = *indexBuffer };
+        vk::DeviceAddress indexAddr = device.getBufferAddressKHR(iai);
+
+        instances.reserve(submeshes.size());
+        blasBuffers.reserve(submeshes.size());
+        blasMemories.reserve(submeshes.size());
+        blasHandles.reserve(submeshes.size());
+
+        vk::TransformMatrixKHR tm{};
+        tm.matrix = std::array<std::array<float,4>,3>{{
+            std::array<float,4>{1.f, 0.f, 0.f, 0.f},
+            std::array<float,4>{0.f, 1.f, 0.f, 0.f},
+            std::array<float,4>{0.f, 0.f, 1.f, 0.f}
+        }};
+
+        // Build a bottom level acceleration structure for each submesh
+        for (size_t i = 0; i < submeshes.size(); ++i) {
+            const auto& submesh = submeshes[i];
+
+            // Prepare geometry data
+            auto trianglesData = vk::AccelerationStructureGeometryTrianglesDataKHR{
+                .vertexFormat = vk::Format::eR32G32B32Sfloat,
+                .vertexData = vertexAddr,
+                .vertexStride = sizeof(Vertex),
+                .maxVertex = submesh.maxVertex,
+                .indexType = vk::IndexType::eUint32,
+                .indexData = indexAddr + submesh.indexOffset * sizeof(uint32_t)
+            };
+
+            vk::AccelerationStructureGeometryDataKHR geomData(trianglesData);
+            vk::AccelerationStructureGeometryKHR blasGeometry{
+                .geometryType = vk::GeometryTypeKHR::eTriangles,
+                .geometry = geomData
+            };
+
+            if (!submesh.alphaCut)
+            {
+                blasGeometry.flags = vk::GeometryFlagBitsKHR::eOpaque;
+            }
+
+            vk::AccelerationStructureBuildRangeInfoKHR blasRangeInfo{
+                .primitiveCount = static_cast<uint32_t>(submesh.indexCount / 3),
+                .primitiveOffset = 0,
+                .firstVertex = submesh.firstVertex,
+                .transformOffset = 0
+            };
+
+            // Prepare BLAS handle and buffer
+            vk::AccelerationStructureBuildGeometryInfoKHR blasBuildInfo{
+                .type = vk::AccelerationStructureTypeKHR::eBottomLevel,
+                .mode = vk::BuildAccelerationStructureModeKHR::eBuild,
+                .geometryCount = 1,
+                .pGeometries = &blasGeometry,
+            };
+
+            vk::AccelerationStructureBuildSizesInfoKHR blasSizeInfo =
+                device.getAccelerationStructureBuildSizesKHR(
+                    vk::AccelerationStructureBuildTypeKHR::eDevice,
+                    blasBuildInfo,
+                    { blasRangeInfo.primitiveCount }
+            );
+
+            vk::raii::Buffer blasBuffer = nullptr;
+            vk::raii::DeviceMemory blasMemory = nullptr;
+            blasBuffers.emplace_back(std::move(blasBuffer));
+            blasMemories.emplace_back(std::move(blasMemory));
+            createBuffer(blasSizeInfo.accelerationStructureSize,
+                         vk::BufferUsageFlagBits::eAccelerationStructureStorageKHR |
+                         vk::BufferUsageFlagBits::eShaderDeviceAddress |
+                         vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR,
+                         vk::MemoryPropertyFlagBits::eDeviceLocal,
+                         blasBuffers[i], blasMemories[i]);
+
+            vk::AccelerationStructureCreateInfoKHR blasCreateInfo{
+                .buffer = blasBuffers[i],
+                .offset = 0,
+                .size = blasSizeInfo.accelerationStructureSize,
+                .type = vk::AccelerationStructureTypeKHR::eBottomLevel,
+            };
+
+            blasHandles.emplace_back(device.createAccelerationStructureKHR(blasCreateInfo));
+
+            // Allocate a scratch buffer for BLAS and build it
+            vk::raii::Buffer scratchBuffer = nullptr;
+            vk::raii::DeviceMemory scratchMemory = nullptr;
+            createBuffer(blasSizeInfo.buildScratchSize,
+                         vk::BufferUsageFlagBits::eStorageBuffer |
+                         vk::BufferUsageFlagBits::eShaderDeviceAddress,
+                         vk::MemoryPropertyFlagBits::eDeviceLocal,
+                         scratchBuffer, scratchMemory);
+
+            vk::BufferDeviceAddressInfo scratchAddressInfo{ .buffer = *scratchBuffer };
+            vk::DeviceAddress scratchAddr = device.getBufferAddressKHR(scratchAddressInfo);
+
+            auto cmd = beginSingleTimeCommands();
+            blasBuildInfo.dstAccelerationStructure = blasHandles[i];
+            blasBuildInfo.scratchData.deviceAddress = scratchAddr;
+            cmd->buildAccelerationStructuresKHR({ blasBuildInfo }, { &blasRangeInfo });
+            endSingleTimeCommands(*cmd);
+
+            // Create an instance for the TLAS
+            vk::AccelerationStructureDeviceAddressInfoKHR addrInfo{
+                .accelerationStructure = *blasHandles[i]
+            };
+            vk::DeviceAddress blasDeviceAddr = device.getAccelerationStructureAddressKHR(addrInfo);
+
+            vk::AccelerationStructureInstanceKHR instance{};
+            instance.setTransform(tm)
+                .setInstanceCustomIndex(static_cast<uint32_t>(i)) // Used to retrieve intersection information from instance LUT
+                .setMask(0xFF)
+                .setAccelerationStructureReference(blasDeviceAddr)
+                .setFlags(vk::GeometryInstanceFlagBitsKHR::eTriangleFacingCullDisable);
+
+            instances.push_back(instance);
+        }
+
+        // Prepare instance data for the TLAS
+        vk::DeviceSize instBufferSize = sizeof(instances[0]) * instances.size();
+        createBuffer(instBufferSize,
+                     vk::BufferUsageFlagBits::eShaderDeviceAddress |
+                     vk::BufferUsageFlagBits::eTransferDst |
+                     vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR,
+                     vk::MemoryPropertyFlagBits::eHostVisible |
+                     vk::MemoryPropertyFlagBits::eHostCoherent,
+                     instanceBuffer, instanceMemory);
+
+        void *ptr = instanceMemory.mapMemory(0, instBufferSize);
+        memcpy(ptr, instances.data(), instBufferSize);
+        instanceMemory.unmapMemory();
+
+        vk::BufferDeviceAddressInfo instanceAddrInfo{ .buffer = instanceBuffer };
+        vk::DeviceAddress instanceAddr = device.getBufferAddressKHR(instanceAddrInfo);
+
+        vk::AccelerationStructureGeometryKHR tlasGeometry{
+            .geometryType = vk::GeometryTypeKHR::eInstances,
+            .geometry = vk::AccelerationStructureGeometryDataKHR{
+                vk::AccelerationStructureGeometryInstancesDataKHR{
+                    .arrayOfPointers = vk::False,
+                    .data = instanceAddr
+                }
+            }
+        };
+
+        vk::AccelerationStructureBuildRangeInfoKHR tlasRangeInfo{
+            .primitiveCount = static_cast<uint32_t>(instances.size()),
+            .primitiveOffset = 0,
+            .firstVertex = 0,
+            .transformOffset = 0
+        };
+
+        // Prepare TLAS handle and buffer
+        vk::AccelerationStructureBuildGeometryInfoKHR tlasBuildInfo{
+            .type = vk::AccelerationStructureTypeKHR::eTopLevel,
+            .flags = vk::BuildAccelerationStructureFlagBitsKHR::eAllowUpdate,
+            .mode = vk::BuildAccelerationStructureModeKHR::eBuild,
+            .geometryCount = 1,
+            .pGeometries = &tlasGeometry
+        };
+
+        auto tlasSizeInfo = device.getAccelerationStructureBuildSizesKHR(
+            vk::AccelerationStructureBuildTypeKHR::eDevice,
+            tlasBuildInfo,
+            { tlasRangeInfo.primitiveCount }
+        );
+
+        createBuffer(
+            tlasSizeInfo.accelerationStructureSize,
+            vk::BufferUsageFlagBits::eAccelerationStructureStorageKHR |
+            vk::BufferUsageFlagBits::eShaderDeviceAddress |
+            vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR,
+            vk::MemoryPropertyFlagBits::eDeviceLocal,
+            tlasBuffer, tlasMemory
+        );
+
+        vk::AccelerationStructureCreateInfoKHR tlasCreateInfo{
+            .buffer = tlasBuffer,
+            .offset = 0,
+            .size = tlasSizeInfo.accelerationStructureSize,
+            .type = vk::AccelerationStructureTypeKHR::eTopLevel
+        };
+
+        tlas = device.createAccelerationStructureKHR(tlasCreateInfo);
+
+        // Allocate a scratch buffer for TLAS and build it
+        createBuffer(
+            tlasSizeInfo.buildScratchSize,
+            vk::BufferUsageFlagBits::eStorageBuffer |
+            vk::BufferUsageFlagBits::eShaderDeviceAddress,
+            vk::MemoryPropertyFlagBits::eDeviceLocal,
+            tlasScratchBuffer, tlasScratchMemory
+        );
+
+        vk::BufferDeviceAddressInfo scratchAddressInfo{ .buffer = *tlasScratchBuffer };
+        vk::DeviceAddress scratchAddr = device.getBufferAddressKHR(scratchAddressInfo);
+
+        auto cmd = beginSingleTimeCommands();
+        tlasBuildInfo.dstAccelerationStructure = tlas;
+        tlasBuildInfo.scratchData.deviceAddress = scratchAddr;
+        cmd->buildAccelerationStructuresKHR({ tlasBuildInfo }, { &tlasRangeInfo });
+        endSingleTimeCommands(*cmd);
     }
 
     void createVertexBuffer() {
@@ -763,7 +1152,8 @@ private:
         memcpy(dataStaging, vertices.data(), bufferSize);
         stagingBufferMemory.unmapMemory();
 
-        createBuffer(bufferSize, vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eVertexBuffer, vk::MemoryPropertyFlagBits::eDeviceLocal, vertexBuffer, vertexBufferMemory);
+        createBuffer(bufferSize, vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eVertexBuffer | vk::BufferUsageFlagBits::eShaderDeviceAddress |
+            vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR, vk::MemoryPropertyFlagBits::eDeviceLocal, vertexBuffer, vertexBufferMemory);
 
         copyBuffer(stagingBuffer, vertexBuffer, bufferSize);
     }
@@ -779,9 +1169,51 @@ private:
         memcpy(data, indices.data(), bufferSize);
         stagingBufferMemory.unmapMemory();
 
-        createBuffer(bufferSize, vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eIndexBuffer, vk::MemoryPropertyFlagBits::eDeviceLocal, indexBuffer, indexBufferMemory);
+        createBuffer(bufferSize, vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eIndexBuffer | vk::BufferUsageFlagBits::eShaderDeviceAddress |
+            vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR | vk::BufferUsageFlagBits::eStorageBuffer, vk::MemoryPropertyFlagBits::eDeviceLocal, indexBuffer, indexBufferMemory);
 
         copyBuffer(stagingBuffer, indexBuffer, bufferSize);
+    }
+
+    void createUVBuffer() {
+        // Extract all texCoords into a separate vector
+        std::vector<glm::vec2> uvs;
+        uvs.reserve(vertices.size());
+        for (auto& v: vertices) {
+            uvs.push_back(v.texCoord);
+        }
+
+        vk::DeviceSize bufferSize = sizeof(uvs[0]) * uvs.size();
+
+        vk::raii::Buffer stagingBuffer({});
+        vk::raii::DeviceMemory stagingBufferMemory({});
+        createBuffer(bufferSize, vk::BufferUsageFlagBits::eTransferSrc, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, stagingBuffer, stagingBufferMemory);
+
+        void* dataStaging = stagingBufferMemory.mapMemory(0, bufferSize);
+        memcpy(dataStaging, uvs.data(), bufferSize);
+        stagingBufferMemory.unmapMemory();
+
+        createBuffer(bufferSize, vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eStorageBuffer,
+            vk::MemoryPropertyFlagBits::eDeviceLocal, uvBuffer, uvBufferMemory);
+
+        copyBuffer(stagingBuffer, uvBuffer, bufferSize);
+    }
+
+    void createInstanceLUTBuffer() {
+        vk::DeviceSize bufferSize = sizeof(InstanceLUT) * instanceLUTs.size();
+
+        vk::raii::Buffer stagingBuffer({});
+        vk::raii::DeviceMemory stagingBufferMemory({});
+        createBuffer(bufferSize, vk::BufferUsageFlagBits::eTransferSrc, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, stagingBuffer, stagingBufferMemory);
+
+        void* dataStaging = stagingBufferMemory.mapMemory(0, bufferSize);
+        memcpy(dataStaging, instanceLUTs.data(), bufferSize);
+        stagingBufferMemory.unmapMemory();
+
+        createBuffer(bufferSize, vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eStorageBuffer,
+            vk::MemoryPropertyFlagBits::eDeviceLocal, instanceLUTBuffer, instanceLUTBufferMemory);
+
+        copyBuffer(stagingBuffer, instanceLUTBuffer, bufferSize);
     }
 
     void createUniformBuffers() {
@@ -803,11 +1235,15 @@ private:
     void createDescriptorPool() {
         std::array poolSize {
             vk::DescriptorPoolSize( vk::DescriptorType::eUniformBuffer, MAX_FRAMES_IN_FLIGHT),
-            vk::DescriptorPoolSize(  vk::DescriptorType::eCombinedImageSampler, MAX_FRAMES_IN_FLIGHT)
+            vk::DescriptorPoolSize( vk::DescriptorType::eAccelerationStructureKHR, MAX_FRAMES_IN_FLIGHT),
+            vk::DescriptorPoolSize( vk::DescriptorType::eSampler, MAX_FRAMES_IN_FLIGHT),
+            vk::DescriptorPoolSize( vk::DescriptorType::eSampledImage, (uint32_t)materials.size()),
+            vk::DescriptorPoolSize( vk::DescriptorType::eStorageBuffer, MAX_FRAMES_IN_FLIGHT * 3) // indices, UVs, instance LUT
         };
         vk::DescriptorPoolCreateInfo poolInfo{
-            .flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
-            .maxSets = MAX_FRAMES_IN_FLIGHT,
+            .flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet |
+                vk::DescriptorPoolCreateFlagBits::eUpdateAfterBind,
+            .maxSets = MAX_FRAMES_IN_FLIGHT + 1, // + 1 for bindless materials
             .poolSizeCount = static_cast<uint32_t>(poolSize.size()),
             .pPoolSizes = poolSize.data()
         };
@@ -815,47 +1251,158 @@ private:
     }
 
     void createDescriptorSets() {
-        std::vector<vk::DescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, descriptorSetLayout);
-        vk::DescriptorSetAllocateInfo allocInfo{
+        // Global descriptor sets (per frame)
+        std::vector<vk::DescriptorSetLayout> globalLayouts(MAX_FRAMES_IN_FLIGHT, descriptorSetLayoutGlobal);
+
+        vk::DescriptorSetAllocateInfo allocInfoGlobal{
             .descriptorPool = descriptorPool,
-            .descriptorSetCount = static_cast<uint32_t>(layouts.size()),
-            .pSetLayouts = layouts.data()
+            .descriptorSetCount = static_cast<uint32_t>(globalLayouts.size()),
+            .pSetLayouts = globalLayouts.data()
         };
 
-        descriptorSets.clear();
-        descriptorSets = device.allocateDescriptorSets(allocInfo);
+        globalDescriptorSets.clear();
+        globalDescriptorSets = device.allocateDescriptorSets(allocInfoGlobal);
 
         for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+            // Uniform buffer
             vk::DescriptorBufferInfo bufferInfo{
                 .buffer = uniformBuffers[i],
                 .offset = 0,
                 .range = sizeof(UniformBufferObject)
             };
-            vk::DescriptorImageInfo imageInfo{
-                .sampler = textureSampler,
-                .imageView = textureImageView,
-                .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal
+
+            vk::WriteDescriptorSet bufferWrite{
+                .dstSet = globalDescriptorSets[i],
+                .dstBinding = 0,
+                .dstArrayElement = 0,
+                .descriptorCount = 1,
+                .descriptorType = vk::DescriptorType::eUniformBuffer,
+                .pBufferInfo = &bufferInfo
             };
-            std::array descriptorWrites{
-                vk::WriteDescriptorSet{
-                    .dstSet = descriptorSets[i],
-                    .dstBinding = 0,
-                    .dstArrayElement = 0,
-                    .descriptorCount = 1,
-                    .descriptorType = vk::DescriptorType::eUniformBuffer,
-                    .pBufferInfo = &bufferInfo
-                },
-                vk::WriteDescriptorSet{
-                    .dstSet = descriptorSets[i],
-                    .dstBinding = 1,
-                    .dstArrayElement = 0,
-                    .descriptorCount = 1,
-                    .descriptorType = vk::DescriptorType::eCombinedImageSampler,
-                    .pImageInfo = &imageInfo
-                }
+
+            // Acceleration structure
+            vk::WriteDescriptorSetAccelerationStructureKHR asInfo{
+                .accelerationStructureCount = 1,
+                .pAccelerationStructures = {&*tlas}
             };
+
+            vk::WriteDescriptorSet asWrite{
+                .pNext = &asInfo,
+                .dstSet = globalDescriptorSets[i],
+                .dstBinding = 1,
+                .dstArrayElement = 0,
+                .descriptorCount = 1,
+                .descriptorType = vk::DescriptorType::eAccelerationStructureKHR
+            };
+
+            // Indices SSBO
+            vk::DescriptorBufferInfo indexBufferInfo{
+                .buffer = indexBuffer,
+                .offset = 0,
+                .range = sizeof(uint32_t) * indices.size()
+            };
+
+            vk::WriteDescriptorSet indexBufferWrite{
+                .dstSet = globalDescriptorSets[i],
+                .dstBinding = 2,
+                .dstArrayElement = 0,
+                .descriptorCount = 1,
+                .descriptorType = vk::DescriptorType::eStorageBuffer,
+                .pBufferInfo = &indexBufferInfo
+            };
+
+            // UVs SSBO
+            vk::DescriptorBufferInfo uvBufferInfo{
+                .buffer = uvBuffer,
+                .offset = 0,
+                .range = sizeof(glm::vec2) * vertices.size()
+            };
+
+            vk::WriteDescriptorSet uvBufferWrite{
+                .dstSet = globalDescriptorSets[i],
+                .dstBinding = 3,
+                .dstArrayElement = 0,
+                .descriptorCount = 1,
+                .descriptorType = vk::DescriptorType::eStorageBuffer,
+                .pBufferInfo = &uvBufferInfo
+            };
+
+            // Instance LUT SSBO
+            vk::DescriptorBufferInfo instanceLUTBufferInfo{
+                .buffer = instanceLUTBuffer,
+                .offset = 0,
+                .range = sizeof(InstanceLUT) * instanceLUTs.size()
+            };
+
+            vk::WriteDescriptorSet instanceLUTBufferWrite{
+                .dstSet = globalDescriptorSets[i],
+                .dstBinding = 4,
+                .dstArrayElement = 0,
+                .descriptorCount = 1,
+                .descriptorType = vk::DescriptorType::eStorageBuffer,
+                .pBufferInfo = &instanceLUTBufferInfo
+            };
+
+            std::array<vk::WriteDescriptorSet, 5> descriptorWrites{bufferWrite, asWrite, indexBufferWrite, uvBufferWrite, instanceLUTBufferWrite};
+
             device.updateDescriptorSets(descriptorWrites, {});
         }
+
+        // Material descriptor sets (per material)
+        std::vector<uint32_t> variableCounts = { static_cast<uint32_t>(textureImageViews.size()) };
+        vk::DescriptorSetVariableDescriptorCountAllocateInfo variableCountInfo{
+            .descriptorSetCount = 1,
+            .pDescriptorCounts = variableCounts.data()
+        };
+
+        std::vector<vk::DescriptorSetLayout> layouts{ *descriptorSetLayoutMaterial };
+
+        vk::DescriptorSetAllocateInfo allocInfo {
+            .pNext = &variableCountInfo,
+            .descriptorPool = descriptorPool,
+            .descriptorSetCount = static_cast<uint32_t>(layouts.size()),
+            .pSetLayouts = layouts.data()
+        };
+
+        materialDescriptorSets = device.allocateDescriptorSets(allocInfo);
+
+        // Sampler
+        vk::DescriptorImageInfo samplerInfo{
+            .sampler = textureSampler
+		};
+
+        vk::WriteDescriptorSet samplerWrite{
+            .dstSet = materialDescriptorSets[0],
+            .dstBinding = 0,
+            .dstArrayElement = 0,
+            .descriptorCount = 1,
+            .descriptorType = vk::DescriptorType::eSampler,
+            .pImageInfo = &samplerInfo
+        };
+
+        device.updateDescriptorSets({samplerWrite}, {});
+
+        // Textures
+        std::vector<vk::DescriptorImageInfo> imageInfos;
+        imageInfos.reserve(textureImageViews.size());
+        for (auto& iv : textureImageViews) {
+            vk::DescriptorImageInfo imageInfo{
+                .imageView = iv,
+                .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal
+            };
+            imageInfos.push_back(imageInfo);
+        }
+
+        vk::WriteDescriptorSet materialWrite{
+            .dstSet = materialDescriptorSets[0],
+            .dstBinding = 1,
+            .dstArrayElement = 0,
+            .descriptorCount = static_cast<uint32_t>(imageInfos.size()),
+            .descriptorType = vk::DescriptorType::eSampledImage,
+            .pImageInfo = imageInfos.data()
+        };
+
+        device.updateDescriptorSets({materialWrite}, {});
     }
 
     void createBuffer(vk::DeviceSize size, vk::BufferUsageFlags usage, vk::MemoryPropertyFlags properties, vk::raii::Buffer& buffer, vk::raii::DeviceMemory& bufferMemory) {
@@ -870,6 +1417,13 @@ private:
             .allocationSize = memRequirements.size,
             .memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, properties)
         };
+
+        vk::MemoryAllocateFlagsInfo allocFlagsInfo{};
+        if (usage & vk::BufferUsageFlagBits::eShaderDeviceAddress) {
+            allocFlagsInfo.flags = vk::MemoryAllocateFlagBits::eDeviceAddress;
+            allocInfo.pNext = &allocFlagsInfo;
+        }
+
         bufferMemory = vk::raii::DeviceMemory(device, allocInfo);
         buffer.bindMemory(bufferMemory, 0);
     }
@@ -997,8 +1551,15 @@ private:
         commandBuffers[currentFrame].setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), swapChainExtent));
         commandBuffers[currentFrame].bindVertexBuffers(0, *vertexBuffer, {0});
         commandBuffers[currentFrame].bindIndexBuffer( *indexBuffer, 0, vk::IndexType::eUint32 );
-        commandBuffers[currentFrame].bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pipelineLayout, 0, *descriptorSets[currentFrame], nullptr);
-        commandBuffers[currentFrame].drawIndexed(indices.size(), 1, 0, 0, 0);
+
+        commandBuffers[currentFrame].bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pipelineLayout, 0, *globalDescriptorSets[currentFrame], nullptr);
+        commandBuffers[currentFrame].bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pipelineLayout, 1, *materialDescriptorSets[0], nullptr);
+        for (auto& sub : submeshes) {
+            uint32_t idx = sub.matID < 0 ? 0u : static_cast<uint32_t>(sub.matID);
+            commandBuffers[currentFrame].pushConstants<PushConstant>(pipelineLayout, vk::ShaderStageFlagBits::eFragment, 0, PushConstant{ .materialIndex = idx });
+            commandBuffers[currentFrame].drawIndexed(sub.indexCount, 1, sub.indexOffset, 0, 0);
+        }
+
         commandBuffers[currentFrame].endRendering();
         // After rendering, transition the swapchain image to PRESENT_SRC
         transition_image_layout(
@@ -1064,19 +1625,116 @@ private:
         }
     }
 
-    void updateUniformBuffer(uint32_t currentImage) const {
+    void updateUniformBuffer(uint32_t currentImage) {
         static auto startTime = std::chrono::high_resolution_clock::now();
 
         auto currentTime = std::chrono::high_resolution_clock::now();
         float time = std::chrono::duration<float>(currentTime - startTime).count();
 
-        UniformBufferObject ubo{};
-        ubo.model = rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
-        ubo.view = lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+        auto eye = glm::vec3(2.0f, 2.0f, 2.0f);
+
+        ubo.model = rotate(glm::mat4(1.0f), time * 0.1f * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+        ubo.view = lookAt(eye, glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
         ubo.proj = glm::perspective(glm::radians(45.0f), static_cast<float>(swapChainExtent.width) / static_cast<float>(swapChainExtent.height), 0.1f, 10.0f);
         ubo.proj[1][1] *= -1;
+        ubo.cameraPos = eye;
 
         memcpy(uniformBuffersMapped[currentImage], &ubo, sizeof(ubo));
+    }
+
+    void updateTopLevelAS(const glm::mat4 & model) {
+        // Assign the model transform to each instance
+        vk::TransformMatrixKHR tm{};
+        auto &M = model;
+        tm.matrix = std::array<std::array<float,4>,3>{{
+            std::array<float,4>{M[0][0], M[1][0], M[2][0], M[3][0]},
+            std::array<float,4>{M[0][1], M[1][1], M[2][1], M[3][1]},
+            std::array<float,4>{M[0][2], M[1][2], M[2][2], M[3][2]}
+        }};
+
+        for (auto & instance : instances) {
+            instance.setTransform(tm);
+        }
+
+        vk::DeviceSize instBufferSize = sizeof(instances[0]) * instances.size();
+
+        vk::raii::Buffer stagingBuffer({});
+        vk::raii::DeviceMemory stagingBufferMemory({});
+        createBuffer(instBufferSize, vk::BufferUsageFlagBits::eTransferSrc, vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent, stagingBuffer, stagingBufferMemory);
+
+        void* dataStaging = stagingBufferMemory.mapMemory(0, instBufferSize);
+        memcpy(dataStaging, instances.data(), instBufferSize);
+        stagingBufferMemory.unmapMemory();
+
+        copyBuffer(stagingBuffer, instanceBuffer, instBufferSize);
+
+        auto cmd = beginSingleTimeCommands();
+
+        // Pre-build barrier
+        vk::MemoryBarrier preBarrier {
+            .srcAccessMask = vk::AccessFlagBits::eAccelerationStructureWriteKHR | vk::AccessFlagBits::eTransferWrite | vk::AccessFlagBits::eShaderRead,
+            .dstAccessMask = vk::AccessFlagBits::eAccelerationStructureReadKHR | vk::AccessFlagBits::eAccelerationStructureWriteKHR
+        };
+        cmd->pipelineBarrier(
+            vk::PipelineStageFlagBits::eAccelerationStructureBuildKHR | vk::PipelineStageFlagBits::eTransfer | vk::PipelineStageFlagBits::eFragmentShader, // srcStageMask
+            vk::PipelineStageFlagBits::eAccelerationStructureBuildKHR, // dstStageMask
+            {}, // dependencyFlags
+            preBarrier, // memoryBarriers
+            {}, // bufferMemoryBarriers
+            {} // imageMemoryBarriers
+        );
+
+        // Re-build TLAS in place
+        vk::BufferDeviceAddressInfo instanceAddrInfo{ .buffer = instanceBuffer };
+        vk::DeviceAddress instanceAddr = device.getBufferAddressKHR(instanceAddrInfo);
+        vk::AccelerationStructureGeometryKHR tlasGeometry{
+            .geometryType = vk::GeometryTypeKHR::eInstances,
+            .geometry = vk::AccelerationStructureGeometryDataKHR{
+                vk::AccelerationStructureGeometryInstancesDataKHR{
+                    .arrayOfPointers = vk::False,
+                    .data = instanceAddr
+                }
+            }
+        };
+
+        vk::AccelerationStructureBuildGeometryInfoKHR tlasBuildInfo{
+            .type = vk::AccelerationStructureTypeKHR::eTopLevel,
+            .flags = vk::BuildAccelerationStructureFlagBitsKHR::eAllowUpdate,
+            .mode = vk::BuildAccelerationStructureModeKHR::eUpdate,
+            .geometryCount = 1,
+            .pGeometries = &tlasGeometry
+        };
+
+        vk::AccelerationStructureBuildRangeInfoKHR tlasRangeInfo{
+            .primitiveCount = static_cast<uint32_t>(instances.size()),
+            .primitiveOffset = 0,
+            .firstVertex = 0,
+            .transformOffset = 0
+        };
+
+        tlasBuildInfo.dstAccelerationStructure = tlas;
+        tlasBuildInfo.srcAccelerationStructure = tlas;
+        vk::BufferDeviceAddressInfo scratchAddrInfo2 { .buffer = *tlasScratchBuffer };
+        vk::DeviceAddress tlasScratchAddr = device.getBufferAddressKHR(scratchAddrInfo2);
+        tlasBuildInfo.scratchData.deviceAddress = tlasScratchAddr;
+        cmd->buildAccelerationStructuresKHR({ tlasBuildInfo }, { &tlasRangeInfo });
+
+        // Post-build barrier
+        vk::MemoryBarrier postBarrier {
+            .srcAccessMask = vk::AccessFlagBits::eAccelerationStructureWriteKHR,
+            .dstAccessMask = vk::AccessFlagBits::eAccelerationStructureReadKHR | vk::AccessFlagBits::eShaderRead
+        };
+
+        cmd->pipelineBarrier(
+            vk::PipelineStageFlagBits::eAccelerationStructureBuildKHR, // srcStageMask
+            vk::PipelineStageFlagBits::eAccelerationStructureBuildKHR | vk::PipelineStageFlagBits::eFragmentShader, // dstStageMask
+            {}, // dependencyFlags
+            postBarrier, // memoryBarriers
+            {}, // bufferMemoryBarriers
+            {} // imageMemoryBarriers
+        );
+
+        endSingleTimeCommands(*cmd);
     }
 
     void drawFrame() {
@@ -1092,6 +1750,7 @@ private:
             throw std::runtime_error("failed to acquire swap chain image!");
         }
         updateUniformBuffer(currentFrame);
+        updateTopLevelAS(ubo.model);
 
         device.resetFences(  *inFlightFences[currentFrame] );
         commandBuffers[currentFrame].reset();
