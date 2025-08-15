@@ -10,7 +10,7 @@
 #include <array>
 #include <chrono>
 
-#ifdef __INTELLISENSE__
+#if 1 //def __INTELLISENSE__
 #include <vulkan/vulkan_raii.hpp>
 #else
 import vulkan_hpp;
@@ -29,7 +29,7 @@ import vulkan_hpp;
 #include <glm/gtx/hash.hpp>
 
 #define STB_IMAGE_IMPLEMENTATION
-#include <stb_image.h>
+#include <stb/stb_image.h>
 
 #define TINYOBJLOADER_IMPLEMENTATION
 #include <tiny_obj_loader.h>
@@ -305,11 +305,12 @@ private:
     }
 
     void createInstance() {
-        constexpr vk::ApplicationInfo appInfo{ .pApplicationName   = "Hello Triangle",
-                    .applicationVersion = VK_MAKE_VERSION( 1, 0, 0 ),
-                    .pEngineName        = "No Engine",
-                    .engineVersion      = VK_MAKE_VERSION( 1, 0, 0 ),
-                    .apiVersion         = vk::ApiVersion14 };
+        /*constexpr */vk::ApplicationInfo appInfo = { };
+        appInfo .pApplicationName   = "Hello Triangle",
+                    appInfo.applicationVersion = VK_MAKE_VERSION( 1, 0, 0 ),
+                    appInfo.pEngineName        = "No Engine",
+                    appInfo.engineVersion      = VK_MAKE_VERSION( 1, 0, 0 ),
+                    appInfo.apiVersion         = vk::ApiVersion14;
 
         // Get the required layers
         std::vector<char const*> requiredLayers;
@@ -344,12 +345,12 @@ private:
             }
         }
 
-        vk::InstanceCreateInfo createInfo{
-            .pApplicationInfo        = &appInfo,
-            .enabledLayerCount       = static_cast<uint32_t>(requiredLayers.size()),
-            .ppEnabledLayerNames     = requiredLayers.data(),
-            .enabledExtensionCount   = static_cast<uint32_t>(requiredExtensions.size()),
-            .ppEnabledExtensionNames = requiredExtensions.data() };
+        vk::InstanceCreateInfo createInfo = { };
+            createInfo.pApplicationInfo        = &appInfo,
+            createInfo.enabledLayerCount       = static_cast<uint32_t>(requiredLayers.size()),
+            createInfo.ppEnabledLayerNames     = requiredLayers.data(),
+            createInfo.enabledExtensionCount   = static_cast<uint32_t>(requiredExtensions.size()),
+            createInfo.ppEnabledExtensionNames = requiredExtensions.data();
         instance = vk::raii::Instance(context, createInfo);
     }
 
@@ -358,11 +359,11 @@ private:
 
         vk::DebugUtilsMessageSeverityFlagsEXT severityFlags( vk::DebugUtilsMessageSeverityFlagBitsEXT::eVerbose | vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning | vk::DebugUtilsMessageSeverityFlagBitsEXT::eError );
         vk::DebugUtilsMessageTypeFlagsEXT    messageTypeFlags( vk::DebugUtilsMessageTypeFlagBitsEXT::eGeneral | vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformance | vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation );
-        vk::DebugUtilsMessengerCreateInfoEXT debugUtilsMessengerCreateInfoEXT{
-            .messageSeverity = severityFlags,
-            .messageType = messageTypeFlags,
-            .pfnUserCallback = &debugCallback
-        };
+        vk::DebugUtilsMessengerCreateInfoEXT debugUtilsMessengerCreateInfoEXT;
+            debugUtilsMessengerCreateInfoEXT.messageSeverity = severityFlags,
+            debugUtilsMessengerCreateInfoEXT.messageType = messageTypeFlags,
+            debugUtilsMessengerCreateInfoEXT.pfnUserCallback = &debugCallback;
+
         debugMessenger = instance.createDebugUtilsMessengerEXT(debugUtilsMessengerCreateInfoEXT);
     }
 
@@ -477,28 +478,38 @@ private:
             throw std::runtime_error( "Could not find a queue for graphics or present -> terminating" );
         }
 
+        vk::PhysicalDeviceFeatures2 f2 = { };
+                f2.features.samplerAnisotropy = true;                       // vk::PhysicalDeviceFeatures2
+        vk::PhysicalDeviceVulkan12Features f12 = { };
+         f12.shaderSampledImageArrayNonUniformIndexing = true, f12.descriptorBindingSampledImageUpdateAfterBind = true,
+                 f12.descriptorBindingPartiallyBound = true, f12.descriptorBindingVariableDescriptorCount = true,
+                 f12.runtimeDescriptorArray = true, f12.bufferDeviceAddress = true; // },    // vk::PhysicalDeviceVulkan12Features
+        vk::PhysicalDeviceVulkan13Features f13 = { };
+                f13.synchronization2 = true, f13.dynamicRendering = true; //,             // vk::PhysicalDeviceVulkan13Features
+        vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT dS = { };
+                dS.extendedDynamicState = true;                                   // vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT
+        vk::PhysicalDeviceAccelerationStructureFeaturesKHR as = { };
+                as.accelerationStructure = true;                                  // vk::PhysicalDeviceAccelerationStructureFeaturesKHR
+        vk::PhysicalDeviceRayQueryFeaturesKHR rq = { };
+                rq.rayQuery = true;                                                // vk::PhysicalDeviceRayQueryFeaturesKHR
+
         // query for Vulkan 1.3 features
         vk::StructureChain<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceVulkan12Features,
             vk::PhysicalDeviceVulkan13Features, vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT,
             vk::PhysicalDeviceAccelerationStructureFeaturesKHR, vk::PhysicalDeviceRayQueryFeaturesKHR> featureChain = {
-                {.features = {.samplerAnisotropy = true } },                       // vk::PhysicalDeviceFeatures2
-                {.shaderSampledImageArrayNonUniformIndexing = true, .descriptorBindingSampledImageUpdateAfterBind = true,
-                 .descriptorBindingPartiallyBound = true, .descriptorBindingVariableDescriptorCount = true,
-                 .runtimeDescriptorArray = true, .bufferDeviceAddress = true },    // vk::PhysicalDeviceVulkan12Features
-                {.synchronization2 = true, .dynamicRendering = true },             // vk::PhysicalDeviceVulkan13Features
-                {.extendedDynamicState = true },                                   // vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT
-                {.accelerationStructure = true },                                  // vk::PhysicalDeviceAccelerationStructureFeaturesKHR
-                {.rayQuery = true }                                                // vk::PhysicalDeviceRayQueryFeaturesKHR
+               f2, f12, f13, dS, as, rq
         };
 
         // create a Device
         float                     queuePriority = 0.0f;
-        vk::DeviceQueueCreateInfo deviceQueueCreateInfo{ .queueFamilyIndex = graphicsIndex, .queueCount = 1, .pQueuePriorities = &queuePriority };
-        vk::DeviceCreateInfo      deviceCreateInfo{ .pNext = &featureChain.get<vk::PhysicalDeviceFeatures2>(),
-                                                    .queueCreateInfoCount = 1,
-                                                    .pQueueCreateInfos = &deviceQueueCreateInfo,
-                                                    .enabledExtensionCount = static_cast<uint32_t>(requiredDeviceExtension.size()),
-                                                    .ppEnabledExtensionNames = requiredDeviceExtension.data() };
+        vk::DeviceQueueCreateInfo deviceQueueCreateInfo { };
+        deviceQueueCreateInfo.queueFamilyIndex = graphicsIndex,
+        deviceQueueCreateInfo.queueCount = 1, deviceQueueCreateInfo.pQueuePriorities = &queuePriority;
+        vk::DeviceCreateInfo      deviceCreateInfo = { }; deviceCreateInfo.pNext = &featureChain.get<vk::PhysicalDeviceFeatures2>(),
+                                                    deviceCreateInfo.queueCreateInfoCount = 1,
+                                                    deviceCreateInfo.pQueueCreateInfos = &deviceQueueCreateInfo,
+                                                    deviceCreateInfo.enabledExtensionCount = static_cast<uint32_t>(requiredDeviceExtension.size()),
+                                                    deviceCreateInfo.ppEnabledExtensionNames = requiredDeviceExtension.data();
 
         device = vk::raii::Device( physicalDevice, deviceCreateInfo );
         graphicsQueue = vk::raii::Queue( device, graphicsIndex, 0 );
@@ -511,25 +522,25 @@ private:
         swapChainExtent = chooseSwapExtent(surfaceCapabilities);
         auto minImageCount = std::max(3u, surfaceCapabilities.minImageCount);
         minImageCount = (surfaceCapabilities.maxImageCount > 0 && minImageCount > surfaceCapabilities.maxImageCount) ? surfaceCapabilities.maxImageCount : minImageCount;
-        vk::SwapchainCreateInfoKHR swapChainCreateInfo{
-            .surface = surface, .minImageCount = minImageCount,
-            .imageFormat = swapChainImageFormat, .imageColorSpace = vk::ColorSpaceKHR::eSrgbNonlinear,
-            .imageExtent = swapChainExtent, .imageArrayLayers =1,
-            .imageUsage = vk::ImageUsageFlagBits::eColorAttachment, .imageSharingMode = vk::SharingMode::eExclusive,
-            .preTransform = surfaceCapabilities.currentTransform, .compositeAlpha = vk::CompositeAlphaFlagBitsKHR::eOpaque,
-            .presentMode = chooseSwapPresentMode(physicalDevice.getSurfacePresentModesKHR(surface)),
-            .clipped = true };
+        vk::SwapchainCreateInfoKHR swapChainCreateInfo = { };
+            swapChainCreateInfo.surface = surface, swapChainCreateInfo.minImageCount = minImageCount,
+            swapChainCreateInfo.imageFormat = swapChainImageFormat, swapChainCreateInfo.imageColorSpace = vk::ColorSpaceKHR::eSrgbNonlinear,
+            swapChainCreateInfo.imageExtent = swapChainExtent, swapChainCreateInfo.imageArrayLayers =1,
+            swapChainCreateInfo.imageUsage = vk::ImageUsageFlagBits::eColorAttachment, swapChainCreateInfo.imageSharingMode = vk::SharingMode::eExclusive,
+            swapChainCreateInfo.preTransform = surfaceCapabilities.currentTransform, swapChainCreateInfo.compositeAlpha = vk::CompositeAlphaFlagBitsKHR::eOpaque,
+            swapChainCreateInfo.presentMode = chooseSwapPresentMode(physicalDevice.getSurfacePresentModesKHR(surface)),
+            swapChainCreateInfo.clipped = true;
 
         swapChain = vk::raii::SwapchainKHR(device, swapChainCreateInfo);
         swapChainImages = swapChain.getImages();
     }
 
     void createImageViews() {
-        vk::ImageViewCreateInfo imageViewCreateInfo{
-            .viewType = vk::ImageViewType::e2D,
-            .format = swapChainImageFormat,
-            .subresourceRange = { vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1 }
-        };
+        vk::ImageViewCreateInfo imageViewCreateInfo { };
+            imageViewCreateInfo.viewType = vk::ImageViewType::e2D,
+            imageViewCreateInfo.format = swapChainImageFormat,
+            imageViewCreateInfo.subresourceRange = { vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1 }
+        ;
         for ( auto image : swapChainImages )
         {
             imageViewCreateInfo.image = image;
@@ -548,7 +559,8 @@ private:
 			vk::DescriptorSetLayoutBinding( 4, vk::DescriptorType::eStorageBuffer, 1, vk::ShaderStageFlagBits::eFragment, nullptr)
         };
 
-        vk::DescriptorSetLayoutCreateInfo globalLayoutInfo{ .bindingCount = static_cast<uint32_t>(global_bindings.size()), .pBindings = global_bindings.data() };
+        vk::DescriptorSetLayoutCreateInfo globalLayoutInfo = { };
+         globalLayoutInfo.bindingCount = static_cast<uint32_t>(global_bindings.size()), globalLayoutInfo.pBindings = global_bindings.data();
 
         descriptorSetLayoutGlobal = vk::raii::DescriptorSetLayout(device, globalLayoutInfo);
 
@@ -565,17 +577,17 @@ private:
             vk::DescriptorBindingFlagBits::ePartiallyBound | vk::DescriptorBindingFlagBits::eVariableDescriptorCount | vk::DescriptorBindingFlagBits::eUpdateAfterBind
         };
 
-        vk::DescriptorSetLayoutBindingFlagsCreateInfo flagsCreateInfo{
-            .bindingCount = static_cast<uint32_t>(bindingFlags.size()),
-            .pBindingFlags = bindingFlags.data()
-        };
+        vk::DescriptorSetLayoutBindingFlagsCreateInfo flagsCreateInfo = { };
+            flagsCreateInfo.bindingCount = static_cast<uint32_t>(bindingFlags.size()),
+            flagsCreateInfo.pBindingFlags = bindingFlags.data()
+        ;
 
-        vk::DescriptorSetLayoutCreateInfo materialLayoutInfo{
-            .pNext = &flagsCreateInfo,
-            .flags = vk::DescriptorSetLayoutCreateFlagBits::eUpdateAfterBindPool,
-            .bindingCount = static_cast<uint32_t>(material_bindings.size()),
-            .pBindings = material_bindings.data(),
-        };
+        vk::DescriptorSetLayoutCreateInfo materialLayoutInfo = { };
+            materialLayoutInfo.pNext = &flagsCreateInfo,
+            materialLayoutInfo.flags = vk::DescriptorSetLayoutCreateFlagBits::eUpdateAfterBindPool,
+            materialLayoutInfo.bindingCount = static_cast<uint32_t>(material_bindings.size()),
+            materialLayoutInfo.pBindings = material_bindings.data()
+        ;
 
         descriptorSetLayoutMaterial = vk::raii::DescriptorSetLayout(device, materialLayoutInfo);
     }
@@ -583,72 +595,76 @@ private:
     void createGraphicsPipeline() {
         vk::raii::ShaderModule shaderModule = createShaderModule(readFile("shaders/slang.spv"));
 
-        vk::PipelineShaderStageCreateInfo vertShaderStageInfo{ .stage = vk::ShaderStageFlagBits::eVertex, .module = shaderModule,  .pName = "vertMain" };
-        vk::PipelineShaderStageCreateInfo fragShaderStageInfo{ .stage = vk::ShaderStageFlagBits::eFragment, .module = shaderModule, .pName = "fragMain" };
+        vk::PipelineShaderStageCreateInfo vertShaderStageInfo = { };
+        vertShaderStageInfo .stage = vk::ShaderStageFlagBits::eVertex, vertShaderStageInfo.module = shaderModule,  vertShaderStageInfo.pName = "vertMain";
+        vk::PipelineShaderStageCreateInfo fragShaderStageInfo = { };
+        fragShaderStageInfo.stage = vk::ShaderStageFlagBits::eFragment, fragShaderStageInfo.module = shaderModule, fragShaderStageInfo.pName = "fragMain";
         vk::PipelineShaderStageCreateInfo shaderStages[] = {vertShaderStageInfo, fragShaderStageInfo};
 
         auto bindingDescription = Vertex::getBindingDescription();
         auto attributeDescriptions = Vertex::getAttributeDescriptions();
-        vk::PipelineVertexInputStateCreateInfo vertexInputInfo{
-            .vertexBindingDescriptionCount = 1,
-            .pVertexBindingDescriptions = &bindingDescription,
-            .vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescriptions.size()),
-            .pVertexAttributeDescriptions = attributeDescriptions.data()
-        };
-        vk::PipelineInputAssemblyStateCreateInfo inputAssembly{
-            .topology = vk::PrimitiveTopology::eTriangleList,
-            .primitiveRestartEnable = vk::False
-        };
-        vk::PipelineViewportStateCreateInfo viewportState{
-            .viewportCount = 1,
-            .scissorCount = 1
-        };
-        vk::PipelineRasterizationStateCreateInfo rasterizer{
-            .depthClampEnable = vk::False,
-            .rasterizerDiscardEnable = vk::False,
-            .polygonMode = vk::PolygonMode::eFill,
-            .cullMode = vk::CullModeFlagBits::eBack,
-            .frontFace = vk::FrontFace::eCounterClockwise,
-            .depthBiasEnable = vk::False
-        };
+        vk::PipelineVertexInputStateCreateInfo vertexInputInfo = {};
+            vertexInputInfo.vertexBindingDescriptionCount = 1,
+            vertexInputInfo.pVertexBindingDescriptions = &bindingDescription,
+            vertexInputInfo.vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescriptions.size()),
+            vertexInputInfo.pVertexAttributeDescriptions = attributeDescriptions.data()
+        ;
+        vk::PipelineInputAssemblyStateCreateInfo inputAssembly = { };
+            inputAssembly.topology = vk::PrimitiveTopology::eTriangleList,
+            inputAssembly.primitiveRestartEnable = vk::False
+        ;
+        vk::PipelineViewportStateCreateInfo viewportState = { };
+            viewportState.viewportCount = 1,
+            viewportState.scissorCount = 1
+        ;
+        vk::PipelineRasterizationStateCreateInfo rasterizer = {};
+            rasterizer.depthClampEnable = vk::False,
+            rasterizer.rasterizerDiscardEnable = vk::False,
+            rasterizer.polygonMode = vk::PolygonMode::eFill,
+            rasterizer.cullMode = vk::CullModeFlagBits::eBack,
+            rasterizer.frontFace = vk::FrontFace::eCounterClockwise,
+            rasterizer.depthBiasEnable = vk::False
+        ;
         rasterizer.lineWidth = 1.0f;
-        vk::PipelineMultisampleStateCreateInfo multisampling{
-            .rasterizationSamples = vk::SampleCountFlagBits::e1,
-            .sampleShadingEnable = vk::False
-        };
-        vk::PipelineDepthStencilStateCreateInfo depthStencil{
-            .depthTestEnable = vk::True,
-            .depthWriteEnable = vk::True,
-            .depthCompareOp = vk::CompareOp::eLess,
-            .depthBoundsTestEnable = vk::False,
-            .stencilTestEnable = vk::False
-        };
+        vk::PipelineMultisampleStateCreateInfo multisampling = { };
+            multisampling.rasterizationSamples = vk::SampleCountFlagBits::e1,
+            multisampling.sampleShadingEnable = vk::False
+        ;
+        vk::PipelineDepthStencilStateCreateInfo depthStencil = {};
+            depthStencil.depthTestEnable = vk::True,
+            depthStencil.depthWriteEnable = vk::True,
+            depthStencil.depthCompareOp = vk::CompareOp::eLess,
+            depthStencil.depthBoundsTestEnable = vk::False,
+            depthStencil.stencilTestEnable = vk::False
+        ;
         vk::PipelineColorBlendAttachmentState colorBlendAttachment;
         colorBlendAttachment.colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG | vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA;
         colorBlendAttachment.blendEnable = vk::False;
 
-        vk::PipelineColorBlendStateCreateInfo colorBlending{
-            .logicOpEnable = vk::False,
-            .logicOp = vk::LogicOp::eCopy,
-            .attachmentCount = 1,
-            .pAttachments = &colorBlendAttachment
-        };
+        vk::PipelineColorBlendStateCreateInfo colorBlending = { };
+            colorBlending.logicOpEnable = vk::False,
+            colorBlending.logicOp = vk::LogicOp::eCopy,
+            colorBlending.attachmentCount = 1,
+            colorBlending.pAttachments = &colorBlendAttachment
+        ;
 
         std::vector dynamicStates = {
             vk::DynamicState::eViewport,
             vk::DynamicState::eScissor
         };
-        vk::PipelineDynamicStateCreateInfo dynamicState{ .dynamicStateCount = static_cast<uint32_t>(dynamicStates.size()), .pDynamicStates = dynamicStates.data() };
+        vk::PipelineDynamicStateCreateInfo dynamicState = { };
+        dynamicState.dynamicStateCount = static_cast<uint32_t>(dynamicStates.size()), dynamicState.pDynamicStates = dynamicStates.data();
 
         vk::DescriptorSetLayout setLayouts[] = {*descriptorSetLayoutGlobal, *descriptorSetLayoutMaterial};
 
-        vk::PushConstantRange pushConstantRange {
-            .stageFlags = vk::ShaderStageFlagBits::eFragment,
-            .offset = 0,
-            .size = sizeof(PushConstant)
-        };
+        vk::PushConstantRange pushConstantRange = { };
+            pushConstantRange.stageFlags = vk::ShaderStageFlagBits::eFragment,
+            pushConstantRange.offset = 0,
+            pushConstantRange.size = sizeof(PushConstant)
+        ;
 
-        vk::PipelineLayoutCreateInfo pipelineLayoutInfo{  .setLayoutCount = 2, .pSetLayouts = setLayouts, .pushConstantRangeCount = 1, .pPushConstantRanges = &pushConstantRange };
+        vk::PipelineLayoutCreateInfo pipelineLayoutInfo = { };
+          pipelineLayoutInfo.setLayoutCount = 2, pipelineLayoutInfo.pSetLayouts = setLayouts, pipelineLayoutInfo.pushConstantRangeCount = 1, pipelineLayoutInfo.pPushConstantRanges = &pushConstantRange;
 
         pipelineLayout = vk::raii::PipelineLayout(device, pipelineLayoutInfo);
 
@@ -659,36 +675,36 @@ private:
          * This new struct replaces what previously was the render pass in the pipeline creation.
          * Note how this structure is now linked in .pNext below, and .renderPass is not used.
          */
-        vk::PipelineRenderingCreateInfo pipelineRenderingCreateInfo{
-            .colorAttachmentCount = 1,
-            .pColorAttachmentFormats = &swapChainImageFormat,
-            .depthAttachmentFormat = depthFormat
-        };
+        vk::PipelineRenderingCreateInfo pipelineRenderingCreateInfo = { };
+            pipelineRenderingCreateInfo.colorAttachmentCount = 1,
+            pipelineRenderingCreateInfo.pColorAttachmentFormats = &swapChainImageFormat,
+            pipelineRenderingCreateInfo.depthAttachmentFormat = depthFormat
+        ;
 
-        vk::GraphicsPipelineCreateInfo pipelineInfo{
-            .pNext = &pipelineRenderingCreateInfo,
-            .stageCount = 2,
-            .pStages = shaderStages,
-            .pVertexInputState = &vertexInputInfo,
-            .pInputAssemblyState = &inputAssembly,
-            .pViewportState = &viewportState,
-            .pRasterizationState = &rasterizer,
-            .pMultisampleState = &multisampling,
-            .pDepthStencilState = &depthStencil,
-            .pColorBlendState = &colorBlending,
-            .pDynamicState = &dynamicState,
-            .layout = pipelineLayout,
-            .renderPass = nullptr
-        };
+        vk::GraphicsPipelineCreateInfo pipelineInfo = { };
+            pipelineInfo.pNext = &pipelineRenderingCreateInfo,
+            pipelineInfo.stageCount = 2,
+            pipelineInfo.pStages = shaderStages,
+            pipelineInfo.pVertexInputState = &vertexInputInfo,
+            pipelineInfo.pInputAssemblyState = &inputAssembly,
+            pipelineInfo.pViewportState = &viewportState,
+            pipelineInfo.pRasterizationState = &rasterizer,
+            pipelineInfo.pMultisampleState = &multisampling,
+            pipelineInfo.pDepthStencilState = &depthStencil,
+            pipelineInfo.pColorBlendState = &colorBlending,
+            pipelineInfo.pDynamicState = &dynamicState,
+            pipelineInfo.layout = pipelineLayout,
+            pipelineInfo.renderPass = nullptr
+        ;
 
         graphicsPipeline = vk::raii::Pipeline(device, nullptr, pipelineInfo);
     }
 
     void createCommandPool() {
-        vk::CommandPoolCreateInfo poolInfo{
-            .flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer,
-            .queueFamilyIndex = graphicsIndex
-        };
+        vk::CommandPoolCreateInfo poolInfo = { };
+            poolInfo.flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer,
+            poolInfo.queueFamilyIndex = graphicsIndex
+        ;
         commandPool = vk::raii::CommandPool(device, poolInfo);
     }
 
@@ -763,52 +779,52 @@ private:
 
     void createTextureSampler() {
         vk::PhysicalDeviceProperties properties = physicalDevice.getProperties();
-        vk::SamplerCreateInfo samplerInfo{
-            .magFilter = vk::Filter::eLinear,
-            .minFilter = vk::Filter::eLinear,
-            .mipmapMode = vk::SamplerMipmapMode::eLinear,
-            .addressModeU = vk::SamplerAddressMode::eRepeat,
-            .addressModeV = vk::SamplerAddressMode::eRepeat,
-            .addressModeW = vk::SamplerAddressMode::eRepeat,
-            .mipLodBias = 0.0f,
-            .anisotropyEnable = vk::True,
-            .maxAnisotropy = properties.limits.maxSamplerAnisotropy,
-            .compareEnable = vk::False,
-            .compareOp = vk::CompareOp::eAlways
-        };
+        vk::SamplerCreateInfo samplerInfo = { };
+            samplerInfo.magFilter = vk::Filter::eLinear,
+            samplerInfo.minFilter = vk::Filter::eLinear,
+            samplerInfo.mipmapMode = vk::SamplerMipmapMode::eLinear,
+            samplerInfo.addressModeU = vk::SamplerAddressMode::eRepeat,
+            samplerInfo.addressModeV = vk::SamplerAddressMode::eRepeat,
+            samplerInfo.addressModeW = vk::SamplerAddressMode::eRepeat,
+            samplerInfo.mipLodBias = 0.0f,
+            samplerInfo.anisotropyEnable = vk::True,
+            samplerInfo.maxAnisotropy = properties.limits.maxSamplerAnisotropy,
+            samplerInfo.compareEnable = vk::False,
+            samplerInfo.compareOp = vk::CompareOp::eAlways
+        ;
         textureSampler = vk::raii::Sampler(device, samplerInfo);
     }
 
     vk::raii::ImageView createImageView(vk::raii::Image& image, vk::Format format, vk::ImageAspectFlags aspectFlags) {
-        vk::ImageViewCreateInfo viewInfo{
-            .image = image,
-            .viewType = vk::ImageViewType::e2D,
-            .format = format,
-            .subresourceRange = { aspectFlags, 0, 1, 0, 1 }
-        };
+        vk::ImageViewCreateInfo viewInfo = {  };
+            viewInfo.image = image,
+            viewInfo.viewType = vk::ImageViewType::e2D,
+            viewInfo.format = format,
+            viewInfo.subresourceRange = { aspectFlags, 0, 1, 0, 1 }
+        ;
         return vk::raii::ImageView(device, viewInfo);
     }
 
     void createImage(uint32_t width, uint32_t height, vk::Format format, vk::ImageTiling tiling, vk::ImageUsageFlags usage, vk::MemoryPropertyFlags properties, vk::raii::Image& image, vk::raii::DeviceMemory& imageMemory) {
-        vk::ImageCreateInfo imageInfo{
-            .imageType = vk::ImageType::e2D,
-            .format = format,
-            .extent = {width, height, 1},
-            .mipLevels = 1,
-            .arrayLayers = 1,
-            .samples = vk::SampleCountFlagBits::e1,
-            .tiling = tiling,
-            .usage = usage,
-            .sharingMode = vk::SharingMode::eExclusive,
-            .initialLayout = vk::ImageLayout::eUndefined
-        };
+        vk::ImageCreateInfo imageInfo = { };
+            imageInfo.imageType = vk::ImageType::e2D,
+            imageInfo.format = format,
+            imageInfo.extent = vk::Extent3D {width, height, 1},
+            imageInfo.mipLevels = 1,
+            imageInfo.arrayLayers = 1,
+            imageInfo.samples = vk::SampleCountFlagBits::e1,
+            imageInfo.tiling = tiling,
+            imageInfo.usage = usage,
+            imageInfo.sharingMode = vk::SharingMode::eExclusive,
+            imageInfo.initialLayout = vk::ImageLayout::eUndefined
+        ;
         image = vk::raii::Image(device, imageInfo);
 
         vk::MemoryRequirements memRequirements = image.getMemoryRequirements();
-        vk::MemoryAllocateInfo allocInfo{
-            .allocationSize = memRequirements.size,
-            .memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, properties)
-        };
+        vk::MemoryAllocateInfo allocInfo = {};
+            allocInfo.allocationSize = memRequirements.size,
+            allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, properties)
+        ;
         imageMemory = vk::raii::DeviceMemory(device, allocInfo);
         image.bindMemory(imageMemory, 0);
     }
@@ -816,12 +832,12 @@ private:
     void transitionImageLayout(const vk::raii::Image& image, vk::ImageLayout oldLayout, vk::ImageLayout newLayout) {
         auto commandBuffer = beginSingleTimeCommands();
 
-        vk::ImageMemoryBarrier barrier{
-            .oldLayout = oldLayout,
-            .newLayout = newLayout,
-            .image = image,
-            .subresourceRange = { vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1 }
-        };
+        vk::ImageMemoryBarrier barrier = { };
+            barrier.oldLayout = oldLayout,
+            barrier.newLayout = newLayout,
+            barrier.image = image,
+            barrier.subresourceRange = { vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1 }
+        ;
 
         vk::PipelineStageFlags sourceStage;
         vk::PipelineStageFlags destinationStage;
@@ -847,14 +863,14 @@ private:
 
     void copyBufferToImage(const vk::raii::Buffer& buffer, vk::raii::Image& image, uint32_t width, uint32_t height) {
         std::unique_ptr<vk::raii::CommandBuffer> commandBuffer = beginSingleTimeCommands();
-        vk::BufferImageCopy region{
-            .bufferOffset = 0,
-            .bufferRowLength = 0,
-            .bufferImageHeight = 0,
-            .imageSubresource = { vk::ImageAspectFlagBits::eColor, 0, 0, 1 },
-            .imageOffset = {0, 0, 0},
-            .imageExtent = {width, height, 1}
-        };
+        vk::BufferImageCopy region = { };
+            region.bufferOffset = 0,
+            region.bufferRowLength = 0,
+            region.bufferImageHeight = 0,
+            region.imageSubresource = { vk::ImageAspectFlagBits::eColor, 0, 0, 1 },
+            region.imageOffset = vk::Offset3D {0, 0, 0},
+            region.imageExtent = vk::Extent3D {width, height, 1}
+        ;
         commandBuffer->copyBufferToImage(buffer, image, vk::ImageLayout::eTransferDstOptimal, {region});
         endSingleTimeCommands(*commandBuffer);
     }
@@ -1061,9 +1077,9 @@ private:
 
     void createAccelerationStructures() {
 #if LAB_TASK_LEVEL >= LAB_TASK_AS_BUILD_AND_BIND
-        vk::BufferDeviceAddressInfo vai{ .buffer = *vertexBuffer };
+        vk::BufferDeviceAddressInfo vai = { }; vai.buffer = *vertexBuffer;
         vk::DeviceAddress vertexAddr = device.getBufferAddressKHR(vai);
-        vk::BufferDeviceAddressInfo iai{ .buffer = *indexBuffer };
+        vk::BufferDeviceAddressInfo iai = { }; iai.buffer = *indexBuffer;
         vk::DeviceAddress indexAddr = device.getBufferAddressKHR(iai);
 
         instances.reserve(submeshes.size());
@@ -1083,33 +1099,33 @@ private:
             const auto& submesh = submeshes[i];
 
             // Prepare the geometry data
-            auto trianglesData = vk::AccelerationStructureGeometryTrianglesDataKHR{
-                .vertexFormat = vk::Format::eR32G32B32Sfloat,
-                .vertexData = vertexAddr,
-                .vertexStride = sizeof(Vertex),
-                .maxVertex = submesh.maxVertex,
-                .indexType = vk::IndexType::eUint32,
-                .indexData = indexAddr + submesh.indexOffset * sizeof(uint32_t)
-            };
+            auto trianglesData = vk::AccelerationStructureGeometryTrianglesDataKHR { };
+                trianglesData.vertexFormat = vk::Format::eR32G32B32Sfloat,
+                trianglesData.vertexData = vertexAddr,
+                trianglesData.vertexStride = sizeof(Vertex),
+                trianglesData.maxVertex = submesh.maxVertex,
+                trianglesData.indexType = vk::IndexType::eUint32,
+                trianglesData.indexData = indexAddr + submesh.indexOffset * sizeof(uint32_t)
+            ;
 
             vk::AccelerationStructureGeometryDataKHR geometryData(trianglesData);
 
-            vk::AccelerationStructureGeometryKHR blasGeometry{
-                .geometryType = vk::GeometryTypeKHR::eTriangles,
-                .geometry = geometryData,
-                .flags = vk::GeometryFlagBitsKHR::eOpaque
-            };
+            vk::AccelerationStructureGeometryKHR blasGeometry = { };
+                blasGeometry.geometryType = vk::GeometryTypeKHR::eTriangles,
+                blasGeometry.geometry = geometryData,
+                blasGeometry.flags = vk::GeometryFlagBitsKHR::eOpaque
+            ;
 #if LAB_TASK_LEVEL >= LAB_TASK_AS_OPAQUE_FLAG
             // TASK07
             blasGeometry.flags = (submesh.alphaCut) ? vk::GeometryFlagsKHR(0) : vk::GeometryFlagBitsKHR::eOpaque;
 #endif // LAB_TASK_LEVEL >= LAB_TASK_AS_OPAQUE_FLAG
 
-            vk::AccelerationStructureBuildGeometryInfoKHR blasBuildGeometryInfo{
-                .type = vk::AccelerationStructureTypeKHR::eBottomLevel,
-                .mode = vk::BuildAccelerationStructureModeKHR::eBuild,
-                .geometryCount = 1,
-                .pGeometries = &blasGeometry,
-            };
+            vk::AccelerationStructureBuildGeometryInfoKHR blasBuildGeometryInfo = { };
+                blasBuildGeometryInfo.type = vk::AccelerationStructureTypeKHR::eBottomLevel,
+                blasBuildGeometryInfo.mode = vk::BuildAccelerationStructureModeKHR::eBuild,
+                blasBuildGeometryInfo.geometryCount = 1,
+                blasBuildGeometryInfo.pGeometries = &blasGeometry
+            ;
 
             // Query the memory sizes that will be needed for this BLAS
             auto primitiveCount = static_cast<uint32_t>(submesh.indexCount / 3);
@@ -1132,7 +1148,8 @@ private:
                          scratchBuffer, scratchMemory);
 
             // Save the scratch buffer address in the build info structure
-            vk::BufferDeviceAddressInfo scratchAddressInfo{ .buffer = *scratchBuffer };
+            vk::BufferDeviceAddressInfo scratchAddressInfo = { };
+             scratchAddressInfo.buffer = *scratchBuffer;
             vk::DeviceAddress scratchAddr = device.getBufferAddressKHR(scratchAddressInfo);
             blasBuildGeometryInfo.scratchData.deviceAddress = scratchAddr;
 
@@ -1149,12 +1166,12 @@ private:
                          blasBuffers[i], blasMemories[i]);
 
             // Create and store the BLAS handle
-            vk::AccelerationStructureCreateInfoKHR blasCreateInfo{
-                .buffer = blasBuffers[i],
-                .offset = 0,
-                .size = blasBuildSizes.accelerationStructureSize,
-                .type = vk::AccelerationStructureTypeKHR::eBottomLevel,
-            };
+            vk::AccelerationStructureCreateInfoKHR blasCreateInfo = { };
+                blasCreateInfo.buffer = blasBuffers[i],
+                blasCreateInfo.offset = 0,
+                blasCreateInfo.size = blasBuildSizes.accelerationStructureSize,
+                blasCreateInfo.type = vk::AccelerationStructureTypeKHR::eBottomLevel
+            ;
 
             blasHandles.emplace_back(device.createAccelerationStructureKHR(blasCreateInfo));
 
@@ -1162,12 +1179,12 @@ private:
             blasBuildGeometryInfo.dstAccelerationStructure = blasHandles[i];
 
             // Prepare the build range for the BLAS
-            vk::AccelerationStructureBuildRangeInfoKHR blasRangeInfo{
-                .primitiveCount = primitiveCount,
-                .primitiveOffset = 0,
-                .firstVertex = submesh.firstVertex,
-                .transformOffset = 0
-            };
+            vk::AccelerationStructureBuildRangeInfoKHR blasRangeInfo = { };
+                blasRangeInfo.primitiveCount = primitiveCount,
+                blasRangeInfo.primitiveOffset = 0,
+                blasRangeInfo.firstVertex = submesh.firstVertex,
+                blasRangeInfo.transformOffset = 0
+            ;
 
             // Build the BLAS
             auto cmd = beginSingleTimeCommands();
@@ -1175,16 +1192,16 @@ private:
             endSingleTimeCommands(*cmd);
 
             // TASK03: Create a BLAS instance for the TLAS
-            vk::AccelerationStructureDeviceAddressInfoKHR addrInfo{
-                .accelerationStructure = *blasHandles[i]
-            };
+            vk::AccelerationStructureDeviceAddressInfoKHR addrInfo = { };
+                addrInfo.accelerationStructure = *blasHandles[i];
+            ;
             vk::DeviceAddress blasDeviceAddr = device.getAccelerationStructureAddressKHR(addrInfo);
 
-            vk::AccelerationStructureInstanceKHR instance{
-                .transform = identity,
-                .mask = 0xFF,
-                .accelerationStructureReference = blasDeviceAddr
-            };
+            vk::AccelerationStructureInstanceKHR instance = { };
+                instance.transform = identity,
+                instance.mask = 0xFF,
+                instance.accelerationStructureReference = blasDeviceAddr
+            ;
 
             instances.push_back(instance);
 
@@ -1210,28 +1227,28 @@ private:
         memcpy(ptr, instances.data(), instBufferSize);
         instanceMemory.unmapMemory();
 
-        vk::BufferDeviceAddressInfo instanceAddrInfo{ .buffer = instanceBuffer };
+        vk::BufferDeviceAddressInfo instanceAddrInfo = { }; instanceAddrInfo.buffer = instanceBuffer;
         vk::DeviceAddress instanceAddr = device.getBufferAddressKHR(instanceAddrInfo);
 
         // Prepare the geometry (instance) data
-        auto instancesData = vk::AccelerationStructureGeometryInstancesDataKHR{
-            .arrayOfPointers = vk::False,
-            .data = instanceAddr
-        };
+        auto instancesData = vk::AccelerationStructureGeometryInstancesDataKHR { };
+            instancesData.arrayOfPointers = vk::False,
+            instancesData.data = instanceAddr
+        ;
 
         vk::AccelerationStructureGeometryDataKHR geometryData(instancesData);
 
-        vk::AccelerationStructureGeometryKHR tlasGeometry{
-            .geometryType = vk::GeometryTypeKHR::eInstances,
-            .geometry = geometryData
-        };
+        vk::AccelerationStructureGeometryKHR tlasGeometry = { };
+            tlasGeometry.geometryType = vk::GeometryTypeKHR::eInstances,
+            tlasGeometry.geometry = geometryData
+        ;
 
-        vk::AccelerationStructureBuildGeometryInfoKHR tlasBuildGeometryInfo{
-            .type = vk::AccelerationStructureTypeKHR::eTopLevel,
-            .mode = vk::BuildAccelerationStructureModeKHR::eBuild,
-            .geometryCount = 1,
-            .pGeometries = &tlasGeometry
-        };
+        vk::AccelerationStructureBuildGeometryInfoKHR tlasBuildGeometryInfo = { };
+            tlasBuildGeometryInfo.type = vk::AccelerationStructureTypeKHR::eTopLevel,
+            tlasBuildGeometryInfo.mode = vk::BuildAccelerationStructureModeKHR::eBuild,
+            tlasBuildGeometryInfo.geometryCount = 1,
+            tlasBuildGeometryInfo.pGeometries = &tlasGeometry
+        ;
 
 #if LAB_TASK_LEVEL >= LAB_TASK_AS_ANIMATION
         tlasBuildGeometryInfo.flags = vk::BuildAccelerationStructureFlagBitsKHR::eAllowUpdate;
@@ -1258,7 +1275,8 @@ private:
         );
 
         // Save the scratch buffer address in the build info structure
-        vk::BufferDeviceAddressInfo scratchAddressInfo{ .buffer = *tlasScratchBuffer };
+        vk::BufferDeviceAddressInfo scratchAddressInfo = { };
+         scratchAddressInfo.buffer = *tlasScratchBuffer;
         vk::DeviceAddress scratchAddr = device.getBufferAddressKHR(scratchAddressInfo);
         tlasBuildGeometryInfo.scratchData.deviceAddress = scratchAddr;
 
@@ -1273,12 +1291,11 @@ private:
         );
 
         // Create and store the TLAS handle
-        vk::AccelerationStructureCreateInfoKHR tlasCreateInfo{
-            .buffer = tlasBuffer,
-            .offset = 0,
-            .size = tlasBuildSizes.accelerationStructureSize,
-            .type = vk::AccelerationStructureTypeKHR::eTopLevel,
-        };
+        vk::AccelerationStructureCreateInfoKHR tlasCreateInfo = { };
+            tlasCreateInfo.buffer = tlasBuffer,
+            tlasCreateInfo.offset = 0,
+            tlasCreateInfo.size = tlasBuildSizes.accelerationStructureSize,
+            tlasCreateInfo.type = vk::AccelerationStructureTypeKHR::eTopLevel;
 
         tlas = device.createAccelerationStructureKHR(tlasCreateInfo);
 
@@ -1286,12 +1303,12 @@ private:
         tlasBuildGeometryInfo.dstAccelerationStructure = tlas;
 
          // Prepare the build range for the TLAS
-         vk::AccelerationStructureBuildRangeInfoKHR tlasRangeInfo{
-             .primitiveCount = primitiveCount,
-             .primitiveOffset = 0,
-             .firstVertex = 0,
-             .transformOffset = 0
-         };
+         vk::AccelerationStructureBuildRangeInfoKHR tlasRangeInfo = { };
+             tlasRangeInfo.primitiveCount = primitiveCount,
+             tlasRangeInfo.primitiveOffset = 0,
+             tlasRangeInfo.firstVertex = 0,
+             tlasRangeInfo.transformOffset = 0
+         ;
 
         // Build the TLAS
         auto cmd = beginSingleTimeCommands();
@@ -1310,13 +1327,13 @@ private:
             vk::DescriptorPoolSize( vk::DescriptorType::eSampler, MAX_FRAMES_IN_FLIGHT),
             vk::DescriptorPoolSize( vk::DescriptorType::eSampledImage, (uint32_t)materials.size())
         };
-        vk::DescriptorPoolCreateInfo poolInfo{
-            .flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet |
+        vk::DescriptorPoolCreateInfo poolInfo = { };
+            poolInfo.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet |
                 vk::DescriptorPoolCreateFlagBits::eUpdateAfterBind,
-            .maxSets = MAX_FRAMES_IN_FLIGHT + 1, // + 1 for bindless materials
-            .poolSizeCount = static_cast<uint32_t>(poolSize.size()),
-            .pPoolSizes = poolSize.data()
-        };
+            poolInfo.maxSets = MAX_FRAMES_IN_FLIGHT + 1, // + 1 for bindless materials
+            poolInfo.poolSizeCount = static_cast<uint32_t>(poolSize.size()),
+            poolInfo.pPoolSizes = poolSize.data()
+        ;
         descriptorPool = vk::raii::DescriptorPool(device, poolInfo);
     }
 
@@ -1324,97 +1341,97 @@ private:
         // Global descriptor sets (per frame)
         std::vector<vk::DescriptorSetLayout> globalLayouts(MAX_FRAMES_IN_FLIGHT, descriptorSetLayoutGlobal);
 
-        vk::DescriptorSetAllocateInfo allocInfoGlobal{
-            .descriptorPool = descriptorPool,
-            .descriptorSetCount = static_cast<uint32_t>(globalLayouts.size()),
-            .pSetLayouts = globalLayouts.data()
-        };
+        vk::DescriptorSetAllocateInfo allocInfoGlobal = { };
+            allocInfoGlobal.descriptorPool = descriptorPool,
+            allocInfoGlobal.descriptorSetCount = static_cast<uint32_t>(globalLayouts.size()),
+            allocInfoGlobal.pSetLayouts = globalLayouts.data()
+        ;
 
         globalDescriptorSets.clear();
         globalDescriptorSets = device.allocateDescriptorSets(allocInfoGlobal);
 
         for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
              // Uniform buffer
-            vk::DescriptorBufferInfo bufferInfo{
-                .buffer = uniformBuffers[i],
-                .offset = 0,
-                .range = sizeof(UniformBufferObject)
-            };
+            vk::DescriptorBufferInfo bufferInfo = { };
+                bufferInfo.buffer = uniformBuffers[i],
+                bufferInfo.offset = 0,
+                bufferInfo.range = sizeof(UniformBufferObject)
+            ;
 
-            vk::WriteDescriptorSet bufferWrite{
-                .dstSet = globalDescriptorSets[i],
-                .dstBinding = 0,
-                .dstArrayElement = 0,
-                .descriptorCount = 1,
-                .descriptorType = vk::DescriptorType::eUniformBuffer,
-                .pBufferInfo = &bufferInfo
-            };
+            vk::WriteDescriptorSet bufferWrite= { };
+                bufferWrite.dstSet = globalDescriptorSets[i],
+                bufferWrite.dstBinding = 0,
+                bufferWrite.dstArrayElement = 0,
+                bufferWrite.descriptorCount = 1,
+                bufferWrite.descriptorType = vk::DescriptorType::eUniformBuffer,
+                bufferWrite.pBufferInfo = &bufferInfo
+            ;
 
 #if LAB_TASK_LEVEL >= LAB_TASK_AS_BUILD_AND_BIND
             // TASK04: define the acceleration structure descriptor.
-            vk::WriteDescriptorSetAccelerationStructureKHR asInfo{
-                .accelerationStructureCount = 1,
-                .pAccelerationStructures = {&*tlas}
-            };
+            vk::WriteDescriptorSetAccelerationStructureKHR asInfo = { };
+                asInfo.accelerationStructureCount = 1,
+                asInfo.pAccelerationStructures = {&*tlas}
+            ;
 
-            vk::WriteDescriptorSet asWrite{
-                .pNext = &asInfo,
-                .dstSet = globalDescriptorSets[i],
-                .dstBinding = 1,
-                .dstArrayElement = 0,
-                .descriptorCount = 1,
-                .descriptorType = vk::DescriptorType::eAccelerationStructureKHR
-            };
+            vk::WriteDescriptorSet asWrite = { };
+                asWrite.pNext = &asInfo,
+                asWrite.dstSet = globalDescriptorSets[i],
+                asWrite.dstBinding = 1,
+                asWrite.dstArrayElement = 0,
+                asWrite.descriptorCount = 1,
+                asWrite.descriptorType = vk::DescriptorType::eAccelerationStructureKHR
+            ;
 #endif // LAB_TASK_LEVEL >= LAB_TASK_AS_BUILD_AND_BIND
 
             // Indices SSBO
-            vk::DescriptorBufferInfo indexBufferInfo{
-                .buffer = indexBuffer,
-                .offset = 0,
-                .range = sizeof(uint32_t) * indices.size()
-            };
+            vk::DescriptorBufferInfo indexBufferInfo = { };
+                indexBufferInfo.buffer = indexBuffer,
+                indexBufferInfo.offset = 0,
+                indexBufferInfo.range = sizeof(uint32_t) * indices.size()
+            ;
 
-            vk::WriteDescriptorSet indexBufferWrite{
-                .dstSet = globalDescriptorSets[i],
-                .dstBinding = 2,
-                .dstArrayElement = 0,
-                .descriptorCount = 1,
-                .descriptorType = vk::DescriptorType::eStorageBuffer,
-                .pBufferInfo = &indexBufferInfo
-            };
+            vk::WriteDescriptorSet indexBufferWrite = { };
+                indexBufferWrite.dstSet = globalDescriptorSets[i],
+                indexBufferWrite.dstBinding = 2,
+                indexBufferWrite.dstArrayElement = 0,
+                indexBufferWrite.descriptorCount = 1,
+                indexBufferWrite.descriptorType = vk::DescriptorType::eStorageBuffer,
+                indexBufferWrite.pBufferInfo = &indexBufferInfo
+            ;
 
             // UVs SSBO
-            vk::DescriptorBufferInfo uvBufferInfo{
-                .buffer = uvBuffer,
-                .offset = 0,
-                .range = sizeof(glm::vec2) * vertices.size()
-            };
+            vk::DescriptorBufferInfo uvBufferInfo = { };
+                uvBufferInfo.buffer = uvBuffer,
+                uvBufferInfo.offset = 0,
+                uvBufferInfo.range = sizeof(glm::vec2) * vertices.size()
+            ;
 
-            vk::WriteDescriptorSet uvBufferWrite{
-                .dstSet = globalDescriptorSets[i],
-                .dstBinding = 3,
-                .dstArrayElement = 0,
-                .descriptorCount = 1,
-                .descriptorType = vk::DescriptorType::eStorageBuffer,
-                .pBufferInfo = &uvBufferInfo
-            };
+            vk::WriteDescriptorSet uvBufferWrite = { };
+                uvBufferWrite.dstSet = globalDescriptorSets[i],
+                uvBufferWrite.dstBinding = 3,
+                uvBufferWrite.dstArrayElement = 0,
+                uvBufferWrite.descriptorCount = 1,
+                uvBufferWrite.descriptorType = vk::DescriptorType::eStorageBuffer,
+                uvBufferWrite.pBufferInfo = &uvBufferInfo
+            ;
 
 #if LAB_TASK_LEVEL >= LAB_TASK_INSTANCE_LUT
             // TASK09: Instance LUT SSBO
-            vk::DescriptorBufferInfo instanceLUTBufferInfo{
-                .buffer = instanceLUTBuffer,
-                .offset = 0,
-                .range = sizeof(InstanceLUT) * instanceLUTs.size()
-            };
+            vk::DescriptorBufferInfo instanceLUTBufferInfo = { };
+                instanceLUTBufferInfo.buffer = instanceLUTBuffer,
+                instanceLUTBufferInfo.offset = 0,
+                instanceLUTBufferInfo.range = sizeof(InstanceLUT) * instanceLUTs.size()
+            ;
 
-            vk::WriteDescriptorSet instanceLUTBufferWrite{
-                .dstSet = globalDescriptorSets[i],
-                .dstBinding = 4,
-                .dstArrayElement = 0,
-                .descriptorCount = 1,
-                .descriptorType = vk::DescriptorType::eStorageBuffer,
-                .pBufferInfo = &instanceLUTBufferInfo
-            };
+            vk::WriteDescriptorSet instanceLUTBufferWrite = { };
+                instanceLUTBufferWrite.dstSet = globalDescriptorSets[i],
+                instanceLUTBufferWrite.dstBinding = 4,
+                instanceLUTBufferWrite.dstArrayElement = 0,
+                instanceLUTBufferWrite.descriptorCount = 1,
+                instanceLUTBufferWrite.descriptorType = vk::DescriptorType::eStorageBuffer,
+                instanceLUTBufferWrite.pBufferInfo = &instanceLUTBufferInfo
+            ;
 #endif // LAB_TASK_LEVEL >= LAB_TASK_INSTANCE_LUT
 
 #if LAB_TASK_LEVEL >= LAB_TASK_INSTANCE_LUT
@@ -1432,35 +1449,35 @@ private:
 
         // Material descriptor sets (per material)
         std::vector<uint32_t> variableCounts = { static_cast<uint32_t>(textureImageViews.size()) };
-        vk::DescriptorSetVariableDescriptorCountAllocateInfo variableCountInfo{
-            .descriptorSetCount = 1,
-            .pDescriptorCounts = variableCounts.data()
-        };
+        vk::DescriptorSetVariableDescriptorCountAllocateInfo variableCountInfo = { };
+            variableCountInfo.descriptorSetCount = 1,
+            variableCountInfo.pDescriptorCounts = variableCounts.data()
+        ;
 
         std::vector<vk::DescriptorSetLayout> layouts{ *descriptorSetLayoutMaterial };
 
-        vk::DescriptorSetAllocateInfo allocInfo {
-            .pNext = &variableCountInfo,
-            .descriptorPool = descriptorPool,
-            .descriptorSetCount = static_cast<uint32_t>(layouts.size()),
-            .pSetLayouts = layouts.data()
-        };
+        vk::DescriptorSetAllocateInfo allocInfo = { };
+            allocInfo.pNext = &variableCountInfo,
+            allocInfo.descriptorPool = descriptorPool,
+            allocInfo.descriptorSetCount = static_cast<uint32_t>(layouts.size()),
+            allocInfo.pSetLayouts = layouts.data()
+        ;
 
         materialDescriptorSets = device.allocateDescriptorSets(allocInfo);
 
         // Sampler
-        vk::DescriptorImageInfo samplerInfo{
-            .sampler = textureSampler
-		};
+        vk::DescriptorImageInfo samplerInfo = { };
+            samplerInfo.sampler = textureSampler
+		;
 
-        vk::WriteDescriptorSet samplerWrite{
-            .dstSet = materialDescriptorSets[0],
-            .dstBinding = 0,
-            .dstArrayElement = 0,
-            .descriptorCount = 1,
-            .descriptorType = vk::DescriptorType::eSampler,
-            .pImageInfo = &samplerInfo
-        };
+        vk::WriteDescriptorSet samplerWrite = { };
+            samplerWrite.dstSet = materialDescriptorSets[0],
+            samplerWrite.dstBinding = 0,
+            samplerWrite.dstArrayElement = 0,
+            samplerWrite.descriptorCount = 1,
+            samplerWrite.descriptorType = vk::DescriptorType::eSampler,
+            samplerWrite.pImageInfo = &samplerInfo
+        ;
 
         device.updateDescriptorSets({samplerWrite}, {});
 
@@ -1468,37 +1485,37 @@ private:
         std::vector<vk::DescriptorImageInfo> imageInfos;
         imageInfos.reserve(textureImageViews.size());
         for (auto& iv : textureImageViews) {
-            vk::DescriptorImageInfo imageInfo{
-                .imageView = iv,
-                .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal
-            };
+            vk::DescriptorImageInfo imageInfo = { };
+                imageInfo.imageView = iv,
+                imageInfo.imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal
+            ;
             imageInfos.push_back(imageInfo);
         }
 
-        vk::WriteDescriptorSet materialWrite{
-            .dstSet = materialDescriptorSets[0],
-            .dstBinding = 1,
-            .dstArrayElement = 0,
-            .descriptorCount = static_cast<uint32_t>(imageInfos.size()),
-            .descriptorType = vk::DescriptorType::eSampledImage,
-            .pImageInfo = imageInfos.data()
-        };
+        vk::WriteDescriptorSet materialWrite = { };
+            materialWrite.dstSet = materialDescriptorSets[0],
+            materialWrite.dstBinding = 1,
+            materialWrite.dstArrayElement = 0,
+            materialWrite.descriptorCount = static_cast<uint32_t>(imageInfos.size()),
+            materialWrite.descriptorType = vk::DescriptorType::eSampledImage,
+            materialWrite.pImageInfo = imageInfos.data()
+        ;
 
         device.updateDescriptorSets({materialWrite}, {});
     }
 
     void createBuffer(vk::DeviceSize size, vk::BufferUsageFlags usage, vk::MemoryPropertyFlags properties, vk::raii::Buffer& buffer, vk::raii::DeviceMemory& bufferMemory) {
-        vk::BufferCreateInfo bufferInfo{
-            .size = size,
-            .usage = usage,
-            .sharingMode = vk::SharingMode::eExclusive
-        };
+        vk::BufferCreateInfo bufferInfo = { };
+            bufferInfo.size = size,
+            bufferInfo.usage = usage,
+            bufferInfo.sharingMode = vk::SharingMode::eExclusive
+        ;
         buffer = vk::raii::Buffer(device, bufferInfo);
         vk::MemoryRequirements memRequirements = buffer.getMemoryRequirements();
-        vk::MemoryAllocateInfo allocInfo{
-            .allocationSize = memRequirements.size,
-            .memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, properties)
-        };
+        vk::MemoryAllocateInfo allocInfo = { };
+            allocInfo.allocationSize = memRequirements.size,
+            allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, properties)
+        ;
         vk::MemoryAllocateFlagsInfo allocFlagsInfo{};
         if (usage & vk::BufferUsageFlagBits::eShaderDeviceAddress) {
             allocFlagsInfo.flags = vk::MemoryAllocateFlagBits::eDeviceAddress;
@@ -1509,16 +1526,15 @@ private:
     }
 
     std::unique_ptr<vk::raii::CommandBuffer> beginSingleTimeCommands() {
-        vk::CommandBufferAllocateInfo allocInfo{
-            .commandPool = commandPool,
-            .level = vk::CommandBufferLevel::ePrimary,
-            .commandBufferCount = 1
-        };
+        vk::CommandBufferAllocateInfo allocInfo = { };
+            allocInfo.commandPool = commandPool,
+            allocInfo.level = vk::CommandBufferLevel::ePrimary,
+            allocInfo.commandBufferCount = 1
+        ;
         std::unique_ptr<vk::raii::CommandBuffer> commandBuffer = std::make_unique<vk::raii::CommandBuffer>(std::move(vk::raii::CommandBuffers(device, allocInfo).front()));
 
-        vk::CommandBufferBeginInfo beginInfo{
-            .flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit
-        };
+        vk::CommandBufferBeginInfo beginInfo = { };
+            beginInfo.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
         commandBuffer->begin(beginInfo);
 
         return commandBuffer;
@@ -1527,18 +1543,28 @@ private:
     void endSingleTimeCommands(const vk::raii::CommandBuffer& commandBuffer) const {
         commandBuffer.end();
 
-        vk::SubmitInfo submitInfo{ .commandBufferCount = 1, .pCommandBuffers = &*commandBuffer };
+        vk::SubmitInfo submitInfo = { };
+         submitInfo.commandBufferCount = 1, submitInfo.pCommandBuffers = &*commandBuffer;
         graphicsQueue.submit(submitInfo, nullptr);
         graphicsQueue.waitIdle();
     }
 
     void copyBuffer(vk::raii::Buffer & srcBuffer, vk::raii::Buffer & dstBuffer, vk::DeviceSize size) {
-        vk::CommandBufferAllocateInfo allocInfo{ .commandPool = commandPool, .level = vk::CommandBufferLevel::ePrimary, .commandBufferCount = 1 };
+        vk::CommandBufferAllocateInfo allocInfo = { };
+         allocInfo.commandPool = commandPool, allocInfo.level = vk::CommandBufferLevel::ePrimary, allocInfo.commandBufferCount = 1;
         vk::raii::CommandBuffer commandCopyBuffer = std::move(device.allocateCommandBuffers(allocInfo).front());
-        commandCopyBuffer.begin(vk::CommandBufferBeginInfo{ .flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit });
-        commandCopyBuffer.copyBuffer(*srcBuffer, *dstBuffer, vk::BufferCopy{ .size = size });
+
+        vk::CommandBufferBeginInfo beginInfo = {  };
+
+        beginInfo.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit;
+
+        commandCopyBuffer.begin(beginInfo);
+        vk::BufferCopy bc = { }; bc.size = size;
+        commandCopyBuffer.copyBuffer(*srcBuffer, *dstBuffer, bc);
         commandCopyBuffer.end();
-        graphicsQueue.submit(vk::SubmitInfo{ .commandBufferCount = 1, .pCommandBuffers = &*commandCopyBuffer }, nullptr);
+        vk::SubmitInfo submitInfo = { };
+        submitInfo .commandBufferCount = 1, submitInfo.pCommandBuffers = &*commandCopyBuffer;
+        graphicsQueue.submit(submitInfo, nullptr);
         graphicsQueue.waitIdle();
     }
 
@@ -1556,8 +1582,9 @@ private:
 
     void createCommandBuffers() {
         commandBuffers.clear();
-        vk::CommandBufferAllocateInfo allocInfo{ .commandPool = commandPool, .level = vk::CommandBufferLevel::ePrimary,
-                                                 .commandBufferCount = MAX_FRAMES_IN_FLIGHT };
+        vk::CommandBufferAllocateInfo allocInfo = { };
+        allocInfo .commandPool = commandPool, allocInfo.level = vk::CommandBufferLevel::ePrimary,
+                                                 allocInfo.commandBufferCount = MAX_FRAMES_IN_FLIGHT;
         commandBuffers = vk::raii::CommandBuffers(device, allocInfo);
     }
 
@@ -1574,29 +1601,27 @@ private:
             vk::PipelineStageFlagBits2::eColorAttachmentOutput        // dstStage
         );
         // Transition depth image to depth attachment optimal layout
-        vk::ImageMemoryBarrier2 depthBarrier = {
-            .srcStageMask = vk::PipelineStageFlagBits2::eTopOfPipe,
-            .srcAccessMask = {},
-            .dstStageMask = vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eLateFragmentTests,
-            .dstAccessMask = vk::AccessFlagBits2::eDepthStencilAttachmentRead | vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
-            .oldLayout = vk::ImageLayout::eUndefined,
-            .newLayout = vk::ImageLayout::eDepthStencilAttachmentOptimal,
-            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-            .image = depthImage,
-            .subresourceRange = {
-                .aspectMask = vk::ImageAspectFlagBits::eDepth,
-                .baseMipLevel = 0,
-                .levelCount = 1,
-                .baseArrayLayer = 0,
-                .layerCount = 1
-            }
-        };
-        vk::DependencyInfo depthDependencyInfo = {
-            .dependencyFlags = {},
-            .imageMemoryBarrierCount = 1,
-            .pImageMemoryBarriers = &depthBarrier
-        };
+        vk::ImageMemoryBarrier2 depthBarrier = { };
+            depthBarrier.srcStageMask = vk::PipelineStageFlagBits2::eTopOfPipe,
+            depthBarrier.srcAccessMask = {},
+            depthBarrier.dstStageMask = vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eLateFragmentTests,
+            depthBarrier.dstAccessMask = vk::AccessFlagBits2::eDepthStencilAttachmentRead | vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
+            depthBarrier.oldLayout = vk::ImageLayout::eUndefined,
+            depthBarrier.newLayout = vk::ImageLayout::eDepthStencilAttachmentOptimal,
+            depthBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            depthBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            depthBarrier.image = depthImage,
+            depthBarrier.subresourceRange.aspectMask = vk::ImageAspectFlagBits::eDepth,
+            depthBarrier.subresourceRange.baseMipLevel = 0,
+            depthBarrier.subresourceRange    .levelCount = 1,
+            depthBarrier.subresourceRange    .baseArrayLayer = 0,
+            depthBarrier.subresourceRange    .layerCount = 1
+        ;
+        vk::DependencyInfo depthDependencyInfo = { };
+            depthDependencyInfo.dependencyFlags = {},
+            depthDependencyInfo.imageMemoryBarrierCount = 1,
+            depthDependencyInfo.pImageMemoryBarriers = &depthBarrier
+        ;
         commandBuffers[currentFrame].pipelineBarrier2(depthDependencyInfo);
 
         vk::ClearValue clearColor = vk::ClearColorValue(0.0f, 0.0f, 0.0f, 1.0f);
@@ -1610,30 +1635,31 @@ private:
          * simplifying the code and providing flexibility to change attachments at runtime.
          */
 
-        vk::RenderingAttachmentInfo colorAttachmentInfo = {
-            .imageView = swapChainImageViews[imageIndex],
-            .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
-            .loadOp = vk::AttachmentLoadOp::eClear,
-            .storeOp = vk::AttachmentStoreOp::eStore,
-            .clearValue = clearColor
-        };
+        vk::RenderingAttachmentInfo colorAttachmentInfo = { };
+            colorAttachmentInfo.imageView = swapChainImageViews[imageIndex],
+            colorAttachmentInfo.imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
+            colorAttachmentInfo.loadOp = vk::AttachmentLoadOp::eClear,
+            colorAttachmentInfo.storeOp = vk::AttachmentStoreOp::eStore,
+            colorAttachmentInfo.clearValue = clearColor
+        ;
 
-        vk::RenderingAttachmentInfo depthAttachmentInfo = {
-            .imageView = depthImageView,
-            .imageLayout = vk::ImageLayout::eDepthStencilAttachmentOptimal,
-            .loadOp = vk::AttachmentLoadOp::eClear,
-            .storeOp = vk::AttachmentStoreOp::eDontCare,
-            .clearValue = clearDepth
-        };
+        vk::RenderingAttachmentInfo depthAttachmentInfo = {};
+            depthAttachmentInfo.imageView = depthImageView,
+            depthAttachmentInfo.imageLayout = vk::ImageLayout::eDepthStencilAttachmentOptimal,
+            depthAttachmentInfo.loadOp = vk::AttachmentLoadOp::eClear,
+            depthAttachmentInfo.storeOp = vk::AttachmentStoreOp::eDontCare,
+            depthAttachmentInfo.clearValue = clearDepth
+        ;
 
         // The vk::RenderingInfo structure combines these attachments with other rendering parameters.
-        vk::RenderingInfo renderingInfo = {
-            .renderArea = { .offset = { 0, 0 }, .extent = swapChainExtent },
-            .layerCount = 1,
-            .colorAttachmentCount = 1,
-            .pColorAttachments = &colorAttachmentInfo,
-            .pDepthAttachment = &depthAttachmentInfo
-        };
+        vk::RenderingInfo renderingInfo = { };
+            renderingInfo.renderArea.offset = vk::Offset2D { 0, 0 };
+            renderingInfo.renderArea.extent = swapChainExtent,
+            renderingInfo.layerCount = 1,
+            renderingInfo.colorAttachmentCount = 1,
+            renderingInfo.pColorAttachments = &colorAttachmentInfo,
+            renderingInfo.pDepthAttachment = &depthAttachmentInfo
+        ;
 
         // Note: .beginRendering replaces the previous .beginRenderPass call.
         commandBuffers[currentFrame].beginRendering(renderingInfo);
@@ -1684,29 +1710,27 @@ private:
         vk::PipelineStageFlags2 src_stage_mask,
         vk::PipelineStageFlags2 dst_stage_mask
         ) {
-        vk::ImageMemoryBarrier2 barrier = {
-            .srcStageMask = src_stage_mask,
-            .srcAccessMask = src_access_mask,
-            .dstStageMask = dst_stage_mask,
-            .dstAccessMask = dst_access_mask,
-            .oldLayout = old_layout,
-            .newLayout = new_layout,
-            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-            .image = swapChainImages[imageIndex],
-            .subresourceRange = {
-                .aspectMask = vk::ImageAspectFlagBits::eColor,
-                .baseMipLevel = 0,
-                .levelCount = 1,
-                .baseArrayLayer = 0,
-                .layerCount = 1
-            }
-        };
-        vk::DependencyInfo dependency_info = {
-            .dependencyFlags = {},
-            .imageMemoryBarrierCount = 1,
-            .pImageMemoryBarriers = &barrier
-        };
+        vk::ImageMemoryBarrier2 barrier = { };
+            barrier.srcStageMask = src_stage_mask,
+            barrier.srcAccessMask = src_access_mask,
+            barrier.dstStageMask = dst_stage_mask,
+            barrier.dstAccessMask = dst_access_mask,
+            barrier.oldLayout = old_layout,
+            barrier.newLayout = new_layout,
+            barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            barrier.image = swapChainImages[imageIndex],
+            barrier.subresourceRange .aspectMask = vk::ImageAspectFlagBits::eColor,
+            barrier.subresourceRange     .baseMipLevel = 0,
+            barrier.subresourceRange     .levelCount = 1,
+            barrier.subresourceRange     .baseArrayLayer = 0,
+            barrier.subresourceRange     .layerCount = 1
+        ;
+        vk::DependencyInfo dependency_info = { };
+            dependency_info.dependencyFlags = {},
+            dependency_info.imageMemoryBarrierCount = 1,
+            dependency_info.pImageMemoryBarriers = &barrier
+        ;
         commandBuffers[currentFrame].pipelineBarrier2(dependency_info);
     }
 
@@ -1722,7 +1746,9 @@ private:
 
 
         for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-            inFlightFences.emplace_back(device, vk::FenceCreateInfo{ .flags = vk::FenceCreateFlagBits::eSignaled });
+            vk::FenceCreateInfo info = { };
+            info.flags = vk::FenceCreateFlagBits::eSignaled;
+            inFlightFences.emplace_back(device, info);
         }
     }
 
@@ -1771,53 +1797,54 @@ private:
 
         copyBuffer(stagingBuffer, instanceBuffer, instBufferSize);
 
-        vk::BufferDeviceAddressInfo instanceAddrInfo{ .buffer = instanceBuffer };
+        vk::BufferDeviceAddressInfo instanceAddrInfo = { }; instanceAddrInfo.buffer = instanceBuffer;
         vk::DeviceAddress instanceAddr = device.getBufferAddressKHR(instanceAddrInfo);
 
         // Prepare the geometry (instance) data
-        auto instancesData = vk::AccelerationStructureGeometryInstancesDataKHR{
-            .arrayOfPointers = vk::False,
-            .data = instanceAddr
-        };
+        auto instancesData = vk::AccelerationStructureGeometryInstancesDataKHR{ };
+            instancesData.arrayOfPointers = vk::False,
+            instancesData.data = instanceAddr
+        ;
 
         vk::AccelerationStructureGeometryDataKHR geometryData(instancesData);
 
-        vk::AccelerationStructureGeometryKHR tlasGeometry{
-            .geometryType = vk::GeometryTypeKHR::eInstances,
-            .geometry = geometryData
-        };
+        vk::AccelerationStructureGeometryKHR tlasGeometry={ };
+            tlasGeometry.geometryType = vk::GeometryTypeKHR::eInstances,
+            tlasGeometry.geometry = geometryData
+        ;
 
         // TASK06: Note the new parameters to re-build the TLAS in-place
-        vk::AccelerationStructureBuildGeometryInfoKHR tlasBuildGeometryInfo{
-            .type = vk::AccelerationStructureTypeKHR::eTopLevel,
-            .flags = vk::BuildAccelerationStructureFlagBitsKHR::eAllowUpdate,
-            .mode = vk::BuildAccelerationStructureModeKHR::eUpdate,
-            .srcAccelerationStructure = tlas,
-            .dstAccelerationStructure = tlas,
-            .geometryCount = 1,
-            .pGeometries = &tlasGeometry
-        };
+        vk::AccelerationStructureBuildGeometryInfoKHR tlasBuildGeometryInfo = { };
+            tlasBuildGeometryInfo.type = vk::AccelerationStructureTypeKHR::eTopLevel,
+            tlasBuildGeometryInfo.flags = vk::BuildAccelerationStructureFlagBitsKHR::eAllowUpdate,
+            tlasBuildGeometryInfo.mode = vk::BuildAccelerationStructureModeKHR::eUpdate,
+            tlasBuildGeometryInfo.srcAccelerationStructure = tlas,
+            tlasBuildGeometryInfo.dstAccelerationStructure = tlas,
+            tlasBuildGeometryInfo.geometryCount = 1,
+            tlasBuildGeometryInfo.pGeometries = &tlasGeometry
+        ;
 
-        vk::BufferDeviceAddressInfo scratchAddressInfo{ .buffer = *tlasScratchBuffer };
+        vk::BufferDeviceAddressInfo scratchAddressInfo= { };
+         scratchAddressInfo.buffer = *tlasScratchBuffer;
         vk::DeviceAddress scratchAddr = device.getBufferAddressKHR(scratchAddressInfo);
         tlasBuildGeometryInfo.scratchData.deviceAddress = scratchAddr;
 
         // Prepare the build range for the TLAS
-        vk::AccelerationStructureBuildRangeInfoKHR tlasRangeInfo{
-            .primitiveCount = primitiveCount,
-            .primitiveOffset = 0,
-            .firstVertex = 0,
-            .transformOffset = 0
-        };
+        vk::AccelerationStructureBuildRangeInfoKHR tlasRangeInfo = { };
+            tlasRangeInfo.primitiveCount = primitiveCount,
+            tlasRangeInfo.primitiveOffset = 0,
+            tlasRangeInfo.firstVertex = 0,
+            tlasRangeInfo.transformOffset = 0
+        ;
 
         // Re-build the TLAS
         auto cmd = beginSingleTimeCommands();
 
         // Pre-build barrier
-        vk::MemoryBarrier preBarrier {
-            .srcAccessMask = vk::AccessFlagBits::eAccelerationStructureWriteKHR | vk::AccessFlagBits::eTransferWrite | vk::AccessFlagBits::eShaderRead,
-            .dstAccessMask = vk::AccessFlagBits::eAccelerationStructureReadKHR | vk::AccessFlagBits::eAccelerationStructureWriteKHR
-        };
+        vk::MemoryBarrier preBarrier  = { };
+            preBarrier.srcAccessMask = vk::AccessFlagBits::eAccelerationStructureWriteKHR | vk::AccessFlagBits::eTransferWrite | vk::AccessFlagBits::eShaderRead,
+            preBarrier.dstAccessMask = vk::AccessFlagBits::eAccelerationStructureReadKHR | vk::AccessFlagBits::eAccelerationStructureWriteKHR
+        ;
 
         cmd->pipelineBarrier(
             vk::PipelineStageFlagBits::eAccelerationStructureBuildKHR | vk::PipelineStageFlagBits::eTransfer | vk::PipelineStageFlagBits::eFragmentShader, // srcStageMask
@@ -1831,10 +1858,10 @@ private:
         cmd->buildAccelerationStructuresKHR({ tlasBuildGeometryInfo }, { &tlasRangeInfo });
 
         // Post-build barrier
-        vk::MemoryBarrier postBarrier {
-            .srcAccessMask = vk::AccessFlagBits::eAccelerationStructureWriteKHR,
-            .dstAccessMask = vk::AccessFlagBits::eAccelerationStructureReadKHR | vk::AccessFlagBits::eShaderRead
-        };
+        vk::MemoryBarrier postBarrier = { };
+            postBarrier.srcAccessMask = vk::AccessFlagBits::eAccelerationStructureWriteKHR,
+            postBarrier.dstAccessMask = vk::AccessFlagBits::eAccelerationStructureReadKHR | vk::AccessFlagBits::eShaderRead
+        ;
 
         cmd->pipelineBarrier(
             vk::PipelineStageFlagBits::eAccelerationStructureBuildKHR, // srcStageMask
@@ -1872,14 +1899,17 @@ private:
         recordCommandBuffer(imageIndex);
 
         vk::PipelineStageFlags waitDestinationStageMask( vk::PipelineStageFlagBits::eColorAttachmentOutput );
-        const vk::SubmitInfo submitInfo{ .waitSemaphoreCount = 1, .pWaitSemaphores = &*presentCompleteSemaphore[semaphoreIndex],
-                            .pWaitDstStageMask = &waitDestinationStageMask, .commandBufferCount = 1, .pCommandBuffers = &*commandBuffers[currentFrame],
-                            .signalSemaphoreCount = 1, .pSignalSemaphores = &*renderFinishedSemaphore[imageIndex] };
+        /*const */vk::SubmitInfo submitInfo = { };
+         submitInfo.waitSemaphoreCount = 1, submitInfo.pWaitSemaphores = &*presentCompleteSemaphore[semaphoreIndex],
+                            submitInfo.pWaitDstStageMask = &waitDestinationStageMask, submitInfo.commandBufferCount = 1, submitInfo.pCommandBuffers = &*commandBuffers[currentFrame],
+                            submitInfo.signalSemaphoreCount = 1, submitInfo.pSignalSemaphores = &*renderFinishedSemaphore[imageIndex];
         graphicsQueue.submit(submitInfo, *inFlightFences[currentFrame]);
 
 
-        const vk::PresentInfoKHR presentInfoKHR{ .waitSemaphoreCount = 1, .pWaitSemaphores = &*renderFinishedSemaphore[imageIndex],
-                                                .swapchainCount = 1, .pSwapchains = &*swapChain, .pImageIndices = &imageIndex };
+        /*const */vk::PresentInfoKHR presentInfoKHR = { };
+         presentInfoKHR.waitSemaphoreCount = 1, presentInfoKHR.pWaitSemaphores = &*renderFinishedSemaphore[imageIndex],
+                                                presentInfoKHR.swapchainCount = 1,
+                                                presentInfoKHR.pSwapchains = &*swapChain, presentInfoKHR.pImageIndices = &imageIndex;
         result = presentQueue.presentKHR(presentInfoKHR);
         if (result == vk::Result::eErrorOutOfDateKHR || result == vk::Result::eSuboptimalKHR || framebufferResized) {
             framebufferResized = false;
@@ -1892,7 +1922,8 @@ private:
     }
 
     [[nodiscard]] vk::raii::ShaderModule createShaderModule(const std::vector<char>& code) const {
-        vk::ShaderModuleCreateInfo createInfo{ .codeSize = code.size(), .pCode = reinterpret_cast<const uint32_t*>(code.data()) };
+        vk::ShaderModuleCreateInfo createInfo = { };
+        createInfo .codeSize = code.size(), createInfo.pCode = reinterpret_cast<const uint32_t*>(code.data());
         vk::raii::ShaderModule shaderModule{ device, createInfo };
 
         return shaderModule;
