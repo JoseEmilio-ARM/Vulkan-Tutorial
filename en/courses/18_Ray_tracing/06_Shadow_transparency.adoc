@@ -1,0 +1,82 @@
+== Shadow Transparency (Alpha Test with Ray Queries)
+
+Objective: Add support for textures with transparency (alpha cut) so that shadows respect texture alpha (e.g., leaf edges).
+
+=== Task 7: Alpha-cut transparency in rasterization
+In the raster path, perform an alpha test so fragments with low alpha are discarded:
+
+[,slang]
+----
+float4 baseColor = textures[pc.materialIndex].Sample(textureSampler, vertIn.fragTexCoord);
+// Alpha test
+if (baseColor.a < 0.5) discard;
+----
+
+image::../../../images/38_TASK08_alphacut_before.png[]
+image::../../../images/38_TASK08_alphacut_after.png[]
+
+Also, only set eOpaque for BLAS geometry that does not use alpha cut, so ray traversal can report candidates for transparent triangles:
+
+[,c++]
+----
+vk::AccelerationStructureGeometryKHR blasGeometry{ .geometryType = vk::GeometryTypeKHR::eTriangles, .geometry = geometryData };
+blasGeometry.flags = (submesh.alphaCut) ? vk::GeometryFlagsKHR(0) : vk::GeometryFlagBitsKHR::eOpaque;
+----
+
+=== Task 10: Ray query with alpha test (transparent shadows)
+To make shadows respect transparency, evaluate candidate intersections and only accept a hit when the sampled alpha is above the threshold; otherwise continue traversal.
+
+
+[,slang]
+----
+bool in_shadow_alpha(float3 P)
+{
+    RayDesc ray; ray.Origin = P; ray.Direction = normalize(lightDir); ray.TMin = EPSILON; ray.TMax = 1e4;
+    RayQuery<RAY_FLAG_SKIP_PROCEDURAL_PRIMITIVES> rq;
+    rq.TraceRayInline(accelerationStructure, RAY_FLAG_SKIP_PROCEDURAL_PRIMITIVES, 0xFF, ray);
+
+    bool shadowed = false;
+    while (rq.Proceed()) {
+        if (rq.CandidateType() == CANDIDATE_NON_OPAQUE_TRIANGLE) {
+            // Fetch instance data via custom index -> LUT
+            uint lutIndex = rq.CandidateInstanceID(); // or rq.CandidateInstanceContributionToHitGroupIndex() depending on API; map to LUT
+            InstanceLUT inst = instanceLUTBuffer[lutIndex];
+
+            // Fetch triangle indices via index buffer offset and primitive index
+            uint triFirstIndex = inst.indexBufferOffset + rq.CandidatePrimitiveIndex() * 3u;
+            uint i0 = indexBuffer[triFirstIndex + 0];
+            uint i1 = indexBuffer[triFirstIndex + 1];
+            uint i2 = indexBuffer[triFirstIndex + 2];
+
+            // Interpolate UVs using barycentrics
+            float2 uv0 = uvBuffer[i0];
+            float2 uv1 = uvBuffer[i1];
+            float2 uv2 = uvBuffer[i2];
+            float2 bary = rq.CandidateTriangleBarycentrics();
+            float2 uv = uv0 * (1.0 - bary.x - bary.y) + uv1 * bary.x + uv2 * bary.y;
+
+            // Sample alpha and decide
+            float alpha = textures[inst.materialID].Sample(textureSampler, uv).a;
+            if (alpha >= 0.5) {
+                rq.CommitNonOpaqueTriangleHit();
+            }
+        }
+    }
+
+    shadowed = (rq.CommittedStatus() == COMMITTED_TRIANGLE_HIT);
+    return shadowed;
+}
+----
+
+Tip: Some APIs expose different candidate/committed properties; use the ones available in your shader language (Slang/HLSL with ray query) consistent with the provided scaffolding.
+
+As an optional step, you can use Nsight Graphics to inspect the TLAS/BLAS and verify which triangles are marked opaque vs non-opaque.
+
+image::../../../images/38_TASK10_alphacut_shadows.png[]
+
+
+=== Navigation
+- Previous: link:05_Bindless_resources.adoc[Bindless resources]
+- Next: link:07_Reflections.adoc[Reflections]
+
+

@@ -1,0 +1,29 @@
+== Conclusion
+
+In this course, you progressively integrated ray tracing features into a Vulkan renderer using dynamic rendering and ray queries. You:
+
+- Verified modern Dynamic Rendering in Vulkan and captured it in RenderDoc.
+- Built BLAS and TLAS, and learned where and how to update them when the scene animates.
+- Implemented ray-query based hard shadows for opaque geometry, then extended them to support alpha-cut transparency using an instance look-up table (LUT) and bindless resources.
+- Added a bonus effect: reflections via ray queries, reusing the same AS data and intersection logic.
+
+Key takeaways:
+
+- Ray Queries integrate seamlessly into raster pipelines, are widely supported (including on mobile), and are often simpler to adopt than a full ray tracing pipeline for effects like shadows and reflections.
+- Acceleration structure updates are essential when transforms change; correct synchronization (barriers) around builds avoids subtle GPU hazards.
+- Bindless resources and per-instance metadata (custom indices) enable flexible, material-aware shading during ray traversal.
+
+Where to go next:
+
+- Add skybox sampling for reflection-ray misses.
+- Extend to soft shadows (multi-sample rays) or ambient occlusion rays.
+- Explore refraction or transmission with thickness/IOR.
+- Profile on your target GPU(s), experiment with build/update flags, and validate with Nsight Graphics.
+
+=== References and attachments
+- link:../../../attachments/38_ray_tracing.cpp[38_ray_tracing.cpp]
+- link:../../../attachments/38_ray_tracing.slang[38_ray_tracing.slang]
+- link:../../../attachments/38_ray_tracing_complete.slang[38_ray_tracing_complete.slang]
+
+=== Navigation
+- Previous: link:07_Reflections.adoc[Reflections]

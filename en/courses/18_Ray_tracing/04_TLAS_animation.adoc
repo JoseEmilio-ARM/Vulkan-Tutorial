@@ -1,0 +1,145 @@
+== TLAS Animation (Updating Instances)
+
+Objective: Ensure shadows update when the object animates by rebuilding the TLAS with updated instance transforms each frame.
+
+When the scene animates (e.g., rotating model), the TLAS must be updated to reflect the new instance transforms. Otherwise, shadows will remain static.
+
+=== Task 6: Update the TLAS for animations
+
+Steps:
+
+- Update instance transforms with the current model matrix every frame.
+- Prepare vk::AccelerationStructureGeometryInstancesDataKHR referencing the updated instance buffer.
+- Use vk::BuildAccelerationStructureFlagBitsKHR::eAllowUpdate and set mode to eUpdate; set srcAccelerationStructure and dstAccelerationStructure to the same TLAS to update in-place.
+- Reuse the same scratch buffer if sufficient.
+- Add pre- and post-build memory barriers to synchronize GPU reads/writes around the build.
+
+[,c++]
+----
+// Prepare instance geometry data
+auto instancesData = vk::AccelerationStructureGeometryInstancesDataKHR{ .arrayOfPointers = vk::False, .data = instanceAddr };
+vk::AccelerationStructureGeometryDataKHR geometryData(instancesData);
+vk::AccelerationStructureGeometryKHR tlasGeometry{ .geometryType = vk::GeometryTypeKHR::eInstances, .geometry = geometryData };
+
+// Rebuild in-place
+vk::AccelerationStructureBuildGeometryInfoKHR tlasBuildGeometryInfo{
+    .type = vk::AccelerationStructureTypeKHR::eTopLevel,
+    .flags = vk::BuildAccelerationStructureFlagBitsKHR::eAllowUpdate,
+    .mode = vk::BuildAccelerationStructureModeKHR::eUpdate,
+    .srcAccelerationStructure = tlas,
+    .dstAccelerationStructure = tlas,
+    .geometryCount = 1,
+    .pGeometries = &tlasGeometry
+};
+
+// Pre-build barrier to protect prior AS writes/reads
+vk::MemoryBarrier preBarrier{
+    .srcAccessMask = vk::AccessFlagBits::eAccelerationStructureWriteKHR | vk::AccessFlagBits::eTransferWrite | vk::AccessFlagBits::eShaderRead,
+    .dstAccessMask = vk::AccessFlagBits::eAccelerationStructureReadKHR | vk::AccessFlagBits::eAccelerationStructureWriteKHR
+};
+
+// Post-build barrier to make AS writes visible to subsequent reads
+vk::MemoryBarrier postBarrier{
+    .srcAccessMask = vk::AccessFlagBits::eAccelerationStructureWriteKHR,
+    .dstAccessMask = vk::AccessFlagBits::eAccelerationStructureReadKHR | vk::AccessFlagBits::eShaderRead
+};
+----
+
+Re-build and run with:
+
+[,c++]
+----
+#define LAB_TASK_LEVEL 6
+----
+
+Now the shadows should correctly update since the acceleration structure and geometry animations are in sync.
+
+image::../../../images/38_TASK07_shadows_dynamic.gif[]
+
+
+==== Keeping TLAS in sync with animation
+
+A TLAS is only as fresh as the instance transforms you put into it. If you animate your model (rotate/translate/scale), update the instance data and rebuild the TLAS. Two key pieces make this robust:
+
+1) Allow updates from the start when you first build the TLAS:
+
+[,c++]
+----
+// Initial TLAS build (note the eAllowUpdate flag)
+vk::AccelerationStructureBuildGeometryInfoKHR tlasBuildInfo{
+    .type  = vk::AccelerationStructureTypeKHR::eTopLevel,
+    .flags = vk::BuildAccelerationStructureFlagBitsKHR::eAllowUpdate,
+    .mode  = vk::BuildAccelerationStructureModeKHR::eBuild,
+    .geometryCount = 1,
+    .pGeometries   = &tlasGeometry
+};
+----
+
+2) For per-frame animation, rebuild in-place and add barriers around the build so subsequent ray queries see the new data:
+
+[,c++]
+----
+// Update instances buffer with current model transform, then:
+
+vk::AccelerationStructureBuildGeometryInfoKHR updateInfo{
+    .type  = vk::AccelerationStructureTypeKHR::eTopLevel,
+    .flags = vk::BuildAccelerationStructureFlagBitsKHR::eAllowUpdate,
+    .mode  = vk::BuildAccelerationStructureModeKHR::eUpdate,
+    .srcAccelerationStructure = tlas,
+    .dstAccelerationStructure = tlas,
+    .geometryCount = 1,
+    .pGeometries   = &tlasGeometry
+};
+
+// Pre-build barrier: protect readers/writers of AS before the update
+vk::MemoryBarrier pre{
+    .srcAccessMask = vk::AccessFlagBits::eAccelerationStructureWriteKHR |
+                     vk::AccessFlagBits::eTransferWrite |
+                     vk::AccessFlagBits::eShaderRead,
+    .dstAccessMask = vk::AccessFlagBits::eAccelerationStructureReadKHR |
+                     vk::AccessFlagBits::eAccelerationStructureWriteKHR
+};
+
+cmd->pipelineBarrier(
+    vk::PipelineStageFlagBits::eAccelerationStructureBuildKHR |
+    vk::PipelineStageFlagBits::eTransfer |
+    vk::PipelineStageFlagBits::eFragmentShader,
+    vk::PipelineStageFlagBits::eAccelerationStructureBuildKHR,
+    {}, pre, {}, {}
+);
+
+cmd->buildAccelerationStructuresKHR({ updateInfo }, { &tlasRange });
+
+// Post-build barrier: make the AS writes visible to ray queries & other readers
+vk::MemoryBarrier post{
+    .srcAccessMask = vk::AccessFlagBits::eAccelerationStructureWriteKHR,
+    .dstAccessMask = vk::AccessFlagBits::eAccelerationStructureReadKHR |
+                     vk::AccessFlagBits::eShaderRead
+};
+
+cmd->pipelineBarrier(
+    vk::PipelineStageFlagBits::eAccelerationStructureBuildKHR,
+    vk::PipelineStageFlagBits::eAccelerationStructureBuildKHR |
+    vk::PipelineStageFlagBits::eFragmentShader,
+    {}, post, {}, {}
+);
+----
+
+Where to call the TLAS update? Right after you update your per-frame UBO/model matrix:
+
+[,c++]
+----
+updateUniformBuffer(currentFrame);
+// Keep TLAS in sync with the animated transform
+updateTopLevelAS(ubo.model);
+----
+
+Practical notes:
+- You can reuse the scratch buffer if its size is sufficient for the update path.
+- If you see shadows lag a frame, check your stage masks and barriers.
+- If your geometry topology changes (not just transforms), you’ll need a full rebuild rather than in-place update.
+
+
+=== Navigation
+- Previous: link:03_Ray_query_shadows.adoc[Ray query shadows]
+- Next: link:05_Bindless_resources.adoc[Bindless resources]

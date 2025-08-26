@@ -1,0 +1,58 @@
+== Ray Query Shadows (Opaque Geometry)
+
+Objective: Add a simple shadow test in the fragment shader using a ray query. We will cast a ray from each fragment point toward the light and darken the fragment if something is hit (hard shadow).
+
+image::../../../images/38_TASK06_concept_shadows.png[]
+
+In the fragment shader, implement a helper in_shadow() function that performs the ray query and returns true when an opaque triangle is hit before the light.
+
+[,slang]
+----
+// TASK05: Implement ray query shadows
+bool in_shadow(float3 P)
+{
+    // Build the shadow ray from the world position toward the light
+    RayDesc shadowRayDesc;
+    shadowRayDesc.Origin = P;
+    shadowRayDesc.Direction = normalize(lightDir);
+    shadowRayDesc.TMin = EPSILON;
+    shadowRayDesc.TMax = 1e4;
+
+    // Initialize a ray query for shadows
+    RayQuery<RAY_FLAG_SKIP_PROCEDURAL_PRIMITIVES |
+             RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH> sq;
+    let rayFlags = RAY_FLAG_SKIP_PROCEDURAL_PRIMITIVES |
+                   RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH;
+
+    sq.TraceRayInline(accelerationStructure, rayFlags, 0xFF, shadowRayDesc);
+    sq.Proceed();
+
+    // If the shadow ray intersects an opaque triangle, we consider the pixel in shadow
+    bool hit = (sq.CommittedStatus() == COMMITTED_TRIANGLE_HIT);
+    return hit;
+}
+
+[shader("fragment")]
+float4 fragMain(VSOutput vertIn) : SV_TARGET {
+   float4 baseColor = textures[pc.materialIndex].Sample(textureSampler, vertIn.fragTexCoord);
+   float3 P = vertIn.worldPos;
+   bool inShadow = in_shadow(P);
+   if (inShadow) {
+       baseColor.rgb *= 0.2;
+   }
+   return baseColor;
+}
+----
+
+Re-build and run with:
+
+[,c++]
+----
+#define LAB_TASK_LEVEL 5
+----
+
+However, you will notice that the object is rotating but shadows remain static. That is because the TLAS is not being updated for the animation. Continue to TLAS Animation.
+
+=== Navigation
+- Previous: link:02_Acceleration_structures.adoc[Acceleration structures]
+- Next: link:04_TLAS_animation.adoc[TLAS animation]

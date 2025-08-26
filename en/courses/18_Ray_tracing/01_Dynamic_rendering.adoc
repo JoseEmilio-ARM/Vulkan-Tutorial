@@ -1,0 +1,106 @@
+== Dynamic Rendering
+
+Objective: Ensure the base project uses dynamic rendering and understand how to verify it using RenderDoc.
+
+In dynamic rendering, we no longer create a VkRenderPass or VkFrameBuffer; instead we begin rendering with vkCmdBeginRenderingKHR, specifying attachments on-the-fly. This makes our code more flexible (no need to predeclare subpasses) and is now the "modern" way to render in Vulkan.
+
+=== Task 1: Check the setup for dynamic rendering
+
+[,c++]
+----
+/* TASK01: Check the setup for dynamic rendering */
+// See pipeline creation: vk::PipelineRenderingCreateInfo with .pNext chain
+----
+
+In RenderDoc, verify you see the calls that confirm that dynamic rendering is set up correctly:
+
+. vkCmdBeginRenderingKHR and vkCmdEndRenderingKHR.
+. VkRenderingInfoKHR which replaces the fixed framebuffer object.
+. Color attachment.
+
+image::../../../images/38_TASK01_renderdoc_events.png[]
+image::../../../images/38_TASK01_renderdoc_color.gif[]
+
+NOTE: Dynamic rendering reduces CPU overhead and, with VK_KHR_dynamic_rendering_local_read, lets you do subpass-style tile-local reads without full render passes. This is great for techniques like deferred shading on tilers.
+
+
+==== Dynamic rendering with RenderDoc
+
+Let’s make sure you can actually see dynamic rendering at work in a capture, and also look at the key places in code.
+
+How to capture with RenderDoc (Windows):
+
+. Set Executable to your built sample, e.g. C:\\Users\\you\\Vulkan-Tutorial\\attachments\\build\\38_ray_tracing\\Debug\\38_ray_tracing.exe
+. Set Working Directory to the folder containing the executable, e.g. ...\\attachments\\build\\38_ray_tracing
+. Launch and capture a frame.
+
+image::../../../images/38_TASK01_renderdoc_launch.png[]
+
+In the Event Browser and API Inspector you should see:
+
+- vkCmdBeginRenderingKHR / vkCmdEndRenderingKHR
+- VkRenderingInfoKHR replacing the old render pass/framebuffer concept
+- Color (and depth) attachments set via RenderingAttachmentInfo
+
+The relevant code locations you can skim for orientation:
+
+[,c++]
+----
+/* TASK01 (excerpt): dynamic rendering is enabled by linking
+ * vk::PipelineRenderingCreateInfo in the pNext chain when creating the graphics pipeline.
+ */
+vk::PipelineRenderingCreateInfo pipelineRenderingCreateInfo{
+    .colorAttachmentCount = 1,
+    .pColorAttachmentFormats = &swapChainImageFormat,
+    .depthAttachmentFormat = depthFormat
+};
+
+vk::GraphicsPipelineCreateInfo pipelineInfo{
+    .pNext = &pipelineRenderingCreateInfo,
+    // ... standard pipeline state setup omitted for brevity ...
+    .layout = pipelineLayout,
+    .renderPass = nullptr
+};
+----
+
+And when recording the command buffer for a frame:
+
+[,c++]
+----
+// These attachment infos replace subpass attachments in a legacy render pass
+vk::RenderingAttachmentInfo colorAttachmentInfo{
+    .imageView = swapChainImageViews[imageIndex],
+    .imageLayout = vk::ImageLayout::eColorAttachmentOptimal,
+    .loadOp = vk::AttachmentLoadOp::eClear,
+    .storeOp = vk::AttachmentStoreOp::eStore,
+    .clearValue = clearColor
+};
+
+vk::RenderingAttachmentInfo depthAttachmentInfo{
+    .imageView = depthImageView,
+    .imageLayout = vk::ImageLayout::eDepthStencilAttachmentOptimal,
+    .loadOp = vk::AttachmentLoadOp::eClear,
+    .storeOp = vk::AttachmentStoreOp::eDontCare,
+    .clearValue = clearDepth
+};
+
+vk::RenderingInfo renderingInfo{
+    .renderArea = { .offset = { 0, 0 }, .extent = swapChainExtent },
+    .layerCount = 1,
+    .colorAttachmentCount = 1,
+    .pColorAttachments = &colorAttachmentInfo,
+    .pDepthAttachment = &depthAttachmentInfo
+};
+
+// vkCmdBeginRenderingKHR replaces vkCmdBeginRenderPass
+commandBuffer.beginRendering(renderingInfo);
+// ... draw calls ...
+commandBuffer.endRendering();
+----
+
+That’s all there is to it. Dynamic rendering cuts out a lot of boilerplate and is the recommended path in modern Vulkan. It also pairs nicely with ray queries because you keep everything in a single raster pipeline.
+
+
+=== Navigation
+- Previous: link:00_Overview.adoc[Overview]
+- Next: link:02_Acceleration_structures.adoc[Acceleration structures]

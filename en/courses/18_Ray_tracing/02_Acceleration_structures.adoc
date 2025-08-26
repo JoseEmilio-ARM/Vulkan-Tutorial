@@ -1,0 +1,210 @@
+== Acceleration Structures (BLAS/TLAS)
+
+Objective: Create Bottom-Level Acceleration Structures (BLAS) for the model's submeshes and a Top-Level Acceleration Structure (TLAS) that instances those BLASes. Bind the TLAS to the shader so we can use Ray Queries.
+
+=== Why Acceleration Structures?
+When casting a ray in a scene, we need an optimized structure that quickly identifies which triangle the ray hits. GPUs use acceleration structures that group geometry into bounding boxes, allowing large parts of the scene to be skipped. The ray traversal proceeds down a tree, efficiently narrowing down to the intersected triangle.
+
+image::../../../images/38_bounding_boxes.png[]
+
+Our scene is a simple 3D model (a plant on a table) loaded from an OBJ file. The provided code already loads the model's vertices, indices, normals, and textures into buffers and splits it into submeshes (materials). We'll build one BLAS per submesh and a single TLAS that references them.
+
+=== Task 2: Create a BLAS per submesh
+
+image::../../../images/38_TASK02_blas_structures.png[]
+image::../../../images/38_TASK02_blas_build.png[]
+
+=== Task 3: Create the TLAS
+
+image::../../../images/38_TASK03_tlas_structures.png[]
+
+=== Task 4: Bind the TLAS to the shader
+- Add a RaytracingAccelerationStructure descriptor to the descriptor set layout and write it with the TLAS.
+- In the shader, declare the acceleration structure with the appropriate binding.
+
+[,slang]
+----
+// TASK04: Acceleration structure binding
+[[vk::binding(1,0)]]
+RaytracingAccelerationStructure accelerationStructure;
+----
+
+Re-build and run with:
+
+[,c++]
+----
+#define LAB_TASK_LEVEL 4
+----
+
+You will see no visual difference, but your acceleration structures are now ready for Ray Queries.
+
+==== Building BLAS and TLAS step-by-step
+
+Why BLAS/TLAS again? Rays need to traverse a spatial hierarchy to be fast. We feed triangles to a BLAS, then instance those BLASes in a TLAS with transforms. Here’s a practical walkthrough you can compare to the provided source.
+
+BLAS: describe triangles, query sizes, create buffers and handle, then build on GPU:
+
+[,c++]
+----
+// 1) Describe submesh geometry
+auto trianglesData = vk::AccelerationStructureGeometryTrianglesDataKHR{
+    .vertexFormat = vk::Format::eR32G32B32Sfloat,
+    .vertexData = vertexAddr,              // device address of the vertex buffer
+    .vertexStride = sizeof(Vertex),
+    .maxVertex = submesh.maxVertex,
+    .indexType = vk::IndexType::eUint32,
+    .indexData = indexAddr + submesh.indexOffset * sizeof(uint32_t)
+};
+
+vk::AccelerationStructureGeometryDataKHR geometryData(trianglesData);
+
+vk::AccelerationStructureGeometryKHR blasGeometry{
+    .geometryType = vk::GeometryTypeKHR::eTriangles,
+    .geometry = geometryData,
+    .flags = vk::GeometryFlagBitsKHR::eOpaque   // set to 0 for alpha-cut meshes, see transparency chapter
+};
+
+// 2) Build info and required sizes
+vk::AccelerationStructureBuildGeometryInfoKHR blasBuildInfo{
+    .type = vk::AccelerationStructureTypeKHR::eBottomLevel,
+    .mode = vk::BuildAccelerationStructureModeKHR::eBuild,
+    .geometryCount = 1,
+    .pGeometries = &blasGeometry
+};
+
+uint32_t primitiveCount = submesh.indexCount / 3u;
+auto sizes = device.getAccelerationStructureBuildSizesKHR(
+    vk::AccelerationStructureBuildTypeKHR::eDevice,
+    blasBuildInfo,
+    { primitiveCount }
+);
+
+// 3) Create buffers and BLAS handle (buffer creation omitted for brevity)
+vk::AccelerationStructureCreateInfoKHR asCreate{
+    .buffer = blasBuffer,
+    .offset = 0,
+    .size = sizes.accelerationStructureSize,
+    .type = vk::AccelerationStructureTypeKHR::eBottomLevel
+};
+blases[i] = device.createAccelerationStructureKHR(asCreate);
+blasBuildInfo.dstAccelerationStructure = blases[i];
+
+// 4) Build range (one range for our single geometry)
+vk::AccelerationStructureBuildRangeInfoKHR range{
+    .primitiveCount = primitiveCount,
+    .primitiveOffset = 0,
+    .firstVertex = submesh.firstVertex,
+    .transformOffset = 0
+};
+
+// 5) Record GPU build
+auto cmd = beginSingleTimeCommands();
+cmd->buildAccelerationStructuresKHR({ blasBuildInfo }, { &range });
+endSingleTimeCommands(*cmd);
+----
+
+image::../../../images/38_TASK02_blas_structures.png[]
+image::../../../images/38_TASK02_blas_build.png[]
+
+TLAS: create instances from BLAS device addresses, then build similarly.
+
+[,c++]
+----
+// 1) One instance per submesh
+vk::AccelerationStructureDeviceAddressInfoKHR addrInfo{ .accelerationStructure = *blases[i] };
+vk::DeviceAddress blasAddr = device.getAccelerationStructureAddressKHR(addrInfo);
+
+vk::AccelerationStructureInstanceKHR instance{
+    .transform = identityMatrix3x4(),
+    .mask = 0xFF,
+    .accelerationStructureReference = blasAddr
+};
+instances.push_back(instance);
+
+// 2) Geometry is "instances" for TLAS
+auto instancesData = vk::AccelerationStructureGeometryInstancesDataKHR{
+    .arrayOfPointers = vk::False,
+    .data = instanceAddr    // device address of instances buffer
+};
+
+vk::AccelerationStructureGeometryDataKHR tlasGeomData(instancesData);
+
+vk::AccelerationStructureGeometryKHR tlasGeometry{
+    .geometryType = vk::GeometryTypeKHR::eInstances,
+    .geometry = tlasGeomData
+};
+
+vk::AccelerationStructureBuildGeometryInfoKHR tlasBuildInfo{
+    .type = vk::AccelerationStructureTypeKHR::eTopLevel,
+    .mode = vk::BuildAccelerationStructureModeKHR::eBuild,
+    .geometryCount = 1,
+    .pGeometries = &tlasGeometry
+};
+
+uint32_t instanceCount = static_cast<uint32_t>(instances.size());
+auto tlasSizes = device.getAccelerationStructureBuildSizesKHR(
+    vk::AccelerationStructureBuildTypeKHR::eDevice,
+    tlasBuildInfo,
+    { instanceCount }
+);
+
+vk::AccelerationStructureCreateInfoKHR tlasCreate{
+    .buffer = tlasBuffer,
+    .offset = 0,
+    .size = tlasSizes.accelerationStructureSize,
+    .type = vk::AccelerationStructureTypeKHR::eTopLevel
+};
+
+tlas = device.createAccelerationStructureKHR(tlasCreate);
+tlasBuildInfo.dstAccelerationStructure = tlas;
+
+vk::AccelerationStructureBuildRangeInfoKHR tlasRange{
+    .primitiveCount = instanceCount,
+    .primitiveOffset = 0,
+    .firstVertex = 0,
+    .transformOffset = 0
+};
+
+auto cmd2 = beginSingleTimeCommands();
+cmd2->buildAccelerationStructuresKHR({ tlasBuildInfo }, { &tlasRange });
+endSingleTimeCommands(*cmd2);
+----
+
+Binding the TLAS to the shader: descriptor layout + update + shader declaration.
+
+[,c++]
+----
+// Descriptor set layout (global set 0)
+std::array bindings = {
+    vk::DescriptorSetLayoutBinding(0, vk::DescriptorType::eUniformBuffer, 1, vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment),
+    vk::DescriptorSetLayoutBinding(1, vk::DescriptorType::eAccelerationStructureKHR, 1, vk::ShaderStageFlagBits::eFragment),
+    // ... other bindings (index/uv/LUT) ...
+};
+
+// Write the TLAS
+vk::WriteDescriptorSetAccelerationStructureKHR asInfo{ .accelerationStructureCount = 1, .pAccelerationStructures = { &*tlas } };
+
+vk::WriteDescriptorSet asWrite{
+    .pNext = &asInfo,
+    .dstSet = globalDescriptorSet,
+    .dstBinding = 1,
+    .descriptorCount = 1,
+    .descriptorType = vk::DescriptorType::eAccelerationStructureKHR
+};
+
+device.updateDescriptorSets({ asWrite }, {});
+----
+
+[,slang]
+----
+// In the shader (set 0, binding 1)
+[[vk::binding(1,0)]]
+RaytracingAccelerationStructure accelerationStructure;
+----
+
+That’s the complete path from meshes to a TLAS your ray queries can traverse. With this in place, move on to shadow rays in the next chapter.
+
+
+=== Navigation
+- Previous: link:01_Dynamic_rendering.adoc[Dynamic rendering]
+- Next: link:03_Ray_query_shadows.adoc[Ray query shadows]

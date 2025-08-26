@@ -1,0 +1,94 @@
+== Bindless Resources and Instance Look-up Table
+
+Objective: Prepare for transparency and reflections by enabling bindless access to per-material textures and adding an instance look-up table (LUT) to map ray query instance IDs to material data.
+
+=== Task 9: Bindless resources and instance LUT
+
+- Use a StructuredBuffer/descriptor array for textures to allow bindless sampling in the shader.
+- Add an instance LUT buffer that maps an instanceCustomIndex (from TLAS instance) to materialID and index buffer offsets used to re-fetch attributes during ray queries.
+
+Example data structure used in the shader:
+
+[,slang]
+----
+struct InstanceLUT {
+    uint materialID;
+    uint indexBufferOffset;
+};
+[[vk::binding(4,0)]]
+StructuredBuffer<InstanceLUT> instanceLUTBuffer;
+----
+
+In the TLAS instance description, set a unique custom index per instance to index this LUT:
+
+[,c++]
+----
+VkAccelerationStructureInstanceKHR instance{ };
+// instance.instanceCustomIndex = materialIndexOrLUTIndex; // used in shader to fetch per-instance data
+----
+
+image::../../../images/38_TASK09_instance_lut.png[]
+image::../../../images/38_TASK09_instance_custom_index.png[]
+
+This enables the shader to:
+
+- Determine which material texture to sample when evaluating transparency or reflections.
+- Compute index buffer offsets to re-fetch per-primitive attributes (UVs, etc.) when traversing ray query hits.
+
+==== Bindless textures and the Instance LUT
+
+Why bindless here? Our scene draws many submeshes with different materials; binding each texture separately would be clunky. Instead we bind an array of textures once, and select by index. For ray queries, we can hit any instance, so we need a stable way to recover its material and geometry slice at hit time—hence the Instance LUT keyed by instanceCustomIndex.
+
+App-side push constants and draw:
+
+[,c++]
+----
+struct PushConstant {
+    uint32_t materialIndex;
+};
+
+for (auto& sub : submeshes) {
+    PushConstant pc{
+        .materialIndex = sub.materialID < 0 ? 0u : uint32_t(sub.materialID)
+    };
+    commandBuffers[currentFrame].pushConstants<PushConstant>(
+        pipelineLayout, vk::ShaderStageFlagBits::eFragment, 0, pc);
+    commandBuffers[currentFrame].drawIndexed(sub.indexCount, 1, sub.indexOffset, 0, 0);
+}
+----
+
+Shader-side bindless definitions:
+
+[,slang]
+----
+[[vk::binding(0,1)]] SamplerState textureSampler;
+[[vk::binding(1,1)]] Texture2D<float4> textures[];
+
+struct PushConstant { uint materialIndex; };
+[push_constant] PushConstant pc;
+----
+
+Populating the Instance LUT on CPU when creating AS instances:
+
+[,c++]
+----
+// Give each TLAS instance a unique custom index
+auto& inst = instances.emplace_back();
+inst.instanceCustomIndex = static_cast<uint32_t>(i);
+
+// Record per-instance lookup info used by ray queries
+instanceLUTs.push_back({
+    static_cast<uint32_t>(submesh.materialID),
+    submesh.indexOffset
+});
+----
+
+With Nsight Graphics, you can verify the indices are distinct and mapped correctly by using “Color by → Instance Custom Index”.
+
+At hit time in shaders, we’ll use this LUT to fetch materialID and indexBufferOffset so we can reconstruct UVs and sample the right texture (used in the transparency and reflection chapters).
+
+
+
+=== Navigation
+- Previous: link:04_TLAS_animation.adoc[TLAS animation]
+- Next: link:06_Shadow_transparency.adoc[Shadow transparency]

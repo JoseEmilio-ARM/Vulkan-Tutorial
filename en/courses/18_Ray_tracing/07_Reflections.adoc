@@ -1,0 +1,147 @@
+== Ray Query Reflections
+
+Objective: Implement simple planar reflections using ray queries from the fragment shader.
+
+Reflections are implemented similarly to shadow rays, but we cast a ray from the shaded point along the mirror direction and sample the hit surface color.
+
+image::../../../images/38_TASK11_concept_reflections.png[]
+
+=== Task 11: Implement ray query reflections
+
+[,slang]
+----
+float3 sample_reflection(float3 P, float3 V, float3 N)
+{
+    float3 R = reflect(-normalize(V), normalize(N));
+
+    RayDesc ray; ray.Origin = P + N * EPSILON; ray.Direction = normalize(R); ray.TMin = EPSILON; ray.TMax = 1e4;
+    RayQuery<RAY_FLAG_SKIP_PROCEDURAL_PRIMITIVES> rq;
+    rq.TraceRayInline(accelerationStructure, RAY_FLAG_SKIP_PROCEDURAL_PRIMITIVES, 0xFF, ray);
+
+    float3 reflection = 0;
+    while (rq.Proceed()) {
+        // Handle alpha-tested triangles similarly to the shadow transparency logic
+        if (rq.CandidateType() == CANDIDATE_NON_OPAQUE_TRIANGLE) {
+            uint lutIndex = rq.CandidateInstanceID();
+            InstanceLUT inst = instanceLUTBuffer[lutIndex];
+            uint triFirstIndex = inst.indexBufferOffset + rq.CandidatePrimitiveIndex() * 3u;
+            uint i0 = indexBuffer[triFirstIndex + 0];
+            uint i1 = indexBuffer[triFirstIndex + 1];
+            uint i2 = indexBuffer[triFirstIndex + 2];
+            float2 uv0 = uvBuffer[i0];
+            float2 uv1 = uvBuffer[i1];
+            float2 uv2 = uvBuffer[i2];
+            float2 bary = rq.CandidateTriangleBarycentrics();
+            float2 uv = uv0 * (1.0 - bary.x - bary.y) + uv1 * bary.x + uv2 * bary.y;
+            float alpha = textures[inst.materialID].Sample(textureSampler, uv).a;
+            if (alpha >= 0.5) {
+                rq.CommitNonOpaqueTriangleHit();
+            }
+        }
+    }
+
+    if (rq.CommittedStatus() == COMMITTED_TRIANGLE_HIT) {
+        uint lutIndex = rq.CommittedInstanceID();
+        InstanceLUT inst = instanceLUTBuffer[lutIndex];
+        uint triFirstIndex = inst.indexBufferOffset + rq.CommittedPrimitiveIndex() * 3u;
+        uint i0 = indexBuffer[triFirstIndex + 0];
+        uint i1 = indexBuffer[triFirstIndex + 1];
+        uint i2 = indexBuffer[triFirstIndex + 2];
+        float2 uv0 = uvBuffer[i0];
+        float2 uv1 = uvBuffer[i1];
+        float2 uv2 = uvBuffer[i2];
+        float2 bary = rq.CommittedTriangleBarycentrics();
+        float2 uv = uv0 * (1.0 - bary.x - bary.y) + uv1 * bary.x + uv2 * bary.y;
+        float4 hitColor = textures[inst.materialID].Sample(textureSampler, uv);
+        reflection = hitColor.rgb;
+    }
+
+    return reflection;
+}
+----
+
+In your fragment shader, compute V (from camera to P) and N, sample the base material color, then add a small amount of reflection (e.g., Fresnel-like factor) and clamp.
+
+image::../../../images/38_TASK11_alphacut_reflections.png[]
+
+
+==== Reflections end-to-end
+
+We’ll reuse the same TLAS, LUT, and traversal logic from transparency to implement a simple reflection.
+
+App-side wiring for a reflective flag (example):
+
+[,c++]
+----
+struct PushConstant {
+    uint32_t materialIndex;
+    uint32_t reflective;   // 0/1 flag
+};
+
+for (auto& sub : submeshes) {
+    PushConstant pc{
+        .materialIndex = sub.materialID < 0 ? 0u : uint32_t(sub.materialID),
+        .reflective    = sub.reflective ? 1u : 0u
+    };
+    commandBuffers[currentFrame].pushConstants<PushConstant>(
+        pipelineLayout, vk::ShaderStageFlagBits::eFragment, 0, pc);
+    commandBuffers[currentFrame].drawIndexed(sub.indexCount, 1, sub.indexOffset, 0, 0);
+}
+----
+
+Shader side push constants and a simple blend:
+
+[,slang]
+----
+struct PushConstant { uint materialIndex; uint reflective; };
+[push_constant] PushConstant pc;
+
+float3 fresnel_schlick(float cosTheta, float3 F0)
+{
+    return F0 + (1.0 - F0) * pow(1.0 - cosTheta, 5.0);
+}
+
+void apply_reflection(float3 P, float3 N, inout float4 baseColor)
+{
+    if (pc.reflective == 0) return;
+
+    float3 V = normalize(ubo.cameraPos - P);
+    float3 R = reflect(-V, normalize(N));
+
+    // Cast ray and resolve closest hit color (respecting alpha-cut)
+    float3 hitColor = 0;
+    RayDesc ray; ray.Origin = P + N * EPSILON; ray.Direction = normalize(R); ray.TMin = EPSILON; ray.TMax = 1e4;
+    RayQuery<RAY_FLAG_SKIP_PROCEDURAL_PRIMITIVES> rq;
+    rq.TraceRayInline(accelerationStructure, RAY_FLAG_SKIP_PROCEDURAL_PRIMITIVES, 0xFF, ray);
+
+    while (rq.Proceed()) {
+        if (rq.CandidateType() == CANDIDATE_NON_OPAQUE_TRIANGLE) {
+            uint instID = rq.CandidateInstanceID();
+            uint prim   = rq.CandidatePrimitiveIndex();
+            float2 uv   = intersection_uv(instID, prim, rq.CandidateTriangleBarycentrics());
+            uint matID  = instanceLUTBuffer[NonUniformResourceIndex(instID)].materialID;
+            float a     = textures[NonUniformResourceIndex(matID)].Sample(textureSampler, uv).a;
+            if (a >= 0.5) rq.CommitNonOpaqueTriangleHit();
+        }
+    }
+
+    if (rq.CommittedStatus() == COMMITTED_TRIANGLE_HIT) {
+        uint instID = rq.CommittedInstanceID();
+        uint prim   = rq.CommittedPrimitiveIndex();
+        float2 uv   = intersection_uv(instID, prim, rq.CommittedTriangleBarycentrics());
+        uint matID  = instanceLUTBuffer[NonUniformResourceIndex(instID)].materialID;
+        hitColor    = textures[NonUniformResourceIndex(matID)].Sample(textureSampler, uv).rgb;
+    }
+
+    // Simple Fresnel blend toward reflection
+    float cosTheta = saturate(dot(normalize(N), normalize(V)));
+    float3 F0 = float3(0.04, 0.04, 0.04); // dielectric default
+    float3 F  = fresnel_schlick(cosTheta, F0);
+    baseColor.rgb = lerp(baseColor.rgb, hitColor, F);
+}
+----
+
+
+=== Navigation
+- Previous: link:06_Shadow_transparency.adoc[Shadow transparency]
+- Next: link:08_Conclusion.adoc[Conclusion]
