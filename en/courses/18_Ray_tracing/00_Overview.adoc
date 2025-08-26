@@ -4,6 +4,8 @@
 
 Welcome! In this series, we enhance a Vulkan renderer with ray tracing features to implement real-time pixel-perfect shadows (with and without transparency) and a bonus reflection effect. You will work with provided scaffolded code (based on the Vulkan Tutorial) and fill in key shader functions following step-by-step instructions.
 
+Slides available link:Vulkan%20Ray%20Tracing%20With%20Dynamic%20Rendering.pdf[here].
+
 By the end, you'll learn how to:
 
 - Use Vulkan dynamic rendering (no pre-defined render passes) and verify it with RenderDoc.
